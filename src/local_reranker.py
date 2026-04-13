@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from typing import List, Dict, Any
 import logging
+import src.config as Config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class LocalReranker:
         
         logger.info(f"Reranker loaded on {Config.DEVICE}")
     
-    def rerank(self, query: str, documents: List[str], top_n: int = None) -> List[Dict[str, Any]]:
+    def rerank(self, query: str, documents: List[str], top_n: int = 5) -> List[Dict[str, Any]]:
         """
         Rerank documents based on relevance to query
         

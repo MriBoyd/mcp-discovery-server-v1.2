@@ -22,7 +22,7 @@ class Config:
     # Fusion weights (BM25 : Dense)
     BM25_WEIGHT = 0.3
     DENSE_WEIGHT = 0.7
-    
+        
     # Device
     DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
     

@@ -1,3 +1,4 @@
+import time
 # src/hybrid_searcher.py
 import numpy as np
 from rank_bm25 import BM25Okapi
@@ -21,12 +22,21 @@ class HybridToolSearcher:
     """
     
     def __init__(self):
-        self.embedder = None
-        self.reranker = None
         self.bm25 = None
         self.tools = []
         self.tool_texts = []
         self.tool_embeddings = None
+        
+        # ← Initialize embedder immediately
+        self.embedder = CodeEmbedder(
+            model_path=Config.CODE_EMBEDDING_MODEL,
+            cache_dir=Config.MODEL_CACHE_DIR
+        )
+        self.reranker = LocalReranker(
+            model_path=Config.RERANKER_MODEL,
+            cache_dir=Config.MODEL_CACHE_DIR
+        )
+        
     
     def _prepare_tool_text(self, tool: Dict[str, Any]) -> str:
         """
@@ -71,20 +81,13 @@ class HybridToolSearcher:
         
         # Initialize embedder and generate dense vectors
         logger.info("Initializing Code Embedder...")
-        self.embedder = CodeEmbedder(
-            model_path=Config.CODE_EMBEDDING_MODEL,
-            cache_dir=Config.MODEL_CACHE_DIR
-        )
         
         logger.info("Generating dense embeddings...")
         self.tool_embeddings = self.embedder.batch_encode_tools(self.tool_texts)
         
         # Initialize reranker
         logger.info("Initializing Reranker...")
-        self.reranker = LocalReranker(
-            model_path=Config.RERANKER_MODEL,
-            cache_dir=Config.MODEL_CACHE_DIR
-        )
+        
         
         logger.info(f"Indexing complete! {len(self.tools)} tools ready.")
     
@@ -96,19 +99,30 @@ class HybridToolSearcher:
         if top_k is None:
             top_k = Config.BM25_CANDIDATES
         
+        if self.bm25 is None:
+            logger.warning("BM25 not initialized. Call index() first.")
+            return []
+        
         tokenized_query = query.lower().split()
         scores = self.bm25.get_scores(tokenized_query)
         
         # Get top-k indices
-        top_indices = np.argsort(scores)[::-1][:top_k]
+        top_indices = np.argpartition(scores, -top_k)[-top_k:]
+        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
         
-        return [(float(scores[idx]), idx) for idx in top_indices if scores[idx] > 0]
+        return [(float(scores[idx]), int(idx)) for idx in top_indices if scores[idx] > 0]
     
-    def _dense_search(self, query: str, top_k: int = None) -> List[Tuple[float, int]]:
+    def _dense_search(self, query: str, top_k: int = 5) -> List[Tuple[float, int]]:
         """
         Dense semantic search with Jina Code Embeddings
         Returns list of (score, index) tuples
         """
+        
+        """Dense semantic search"""
+
+        if self.tool_embeddings is None:
+            raise RuntimeError("Must call index() before search()")
+        
         if top_k is None:
             top_k = Config.DENSE_CANDIDATES
         
@@ -117,16 +131,14 @@ class HybridToolSearcher:
         query_vec = np.array(query_embedding)
         
         # Compute cosine similarities
-        similarities = []
-        for tool_emb in self.tool_embeddings:
-            sim = np.dot(query_vec, tool_emb)
-            similarities.append(float(sim))
+        similarities = np.dot(self.tool_embeddings, query_vec)
+        if len(similarities) > top_k:
+            top_indices = np.argpartition(similarities, -top_k)[-top_k:]
+            top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
+        else:
+            top_indices = np.argsort(similarities)[::-1]
         
-        # Get top-k indices
-        similarities = np.array(similarities)
-        top_indices = np.argsort(similarities)[::-1][:top_k]
-        
-        return [(similarities[idx], idx) for idx in top_indices]
+        return [(float(similarities[idx]), int(idx)) for idx in top_indices]
     
     def _fuse_scores(self, bm25_results: List[Tuple[float, int]], 
                      dense_results: List[Tuple[float, int]]) -> List[Tuple[float, int]]:
@@ -161,9 +173,11 @@ class HybridToolSearcher:
             query: Search query
             top_k: Number of results to return (default 5)
         """
-        import time
         start_time = time.time()
         
+        
+        if top_k is None:
+            top_k = Config.FINAL_RESULTS
         
         # Stage 1: BM25 lexical search
         bm25_start = time.time()
@@ -201,5 +215,7 @@ class HybridToolSearcher:
                 'tool_schema': tool,
                 'relevance_score': rerank_item['relevance_score']
             })
+        
+        logger.debug(f"Search completed in {time.time() - start_time:.3f}s")
         
         return final_results[:top_k]
