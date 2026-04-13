@@ -1,0 +1,65 @@
+{
+	"tools": [
+		{
+			"id": "github_create_issue",
+			"name": "create_github_issue",
+			"description": "Create a new issue in a GitHub repository",
+			"parameters": {
+				"repo": {
+					"type": "string",
+					"description": "Repository name in format 'owner/repo'"
+				},
+				"title": {
+					"type": "string",
+					"description": "Issue title"
+				},
+				"body": {
+					"type": "string",
+					"description": "Issue description/body"
+				},
+				"labels": {
+					"type": "array",
+					"description": "List of labels to apply",
+					"default": []
+				}
+			},
+			"required": ["repo", "title"]
+		},
+		{
+			"id": "slack_send_message",
+			"name": "send_slack_message",
+			"description": "Send a message to a Slack channel",
+			"parameters": {
+				"channel": {
+					"type": "string",
+					"description": "Slack channel ID or name"
+				},
+				"text": {
+					"type": "string",
+					"description": "Message text to send"
+				},
+				"thread_ts": {
+					"type": "string",
+					"description": "Timestamp to reply in thread"
+				}
+			},
+			"required": ["channel", "text"]
+		},
+		{
+			"id": "database_query",
+			"name": "execute_sql_query",
+			"description": "Execute a SQL query on the connected database",
+			"parameters": {
+				"query": {
+					"type": "string",
+					"description": "SQL query to execute"
+				},
+				"database": {
+					"type": "string",
+					"description": "Target database name"
+				}
+			},
+			"required": ["query"]
+		}
+	]
+}
