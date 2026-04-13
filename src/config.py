@@ -22,6 +22,8 @@ class Config:
     # Fusion weights (BM25 : Dense)
     BM25_WEIGHT = 0.3
     DENSE_WEIGHT = 0.7
+    FUSION_METHOD = "rrf"  # "weighted", "rrf", or "weighted_rank"
+    RRF_K = 60  # RRF constant (typical values: 60)
         
     # Device
     DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")

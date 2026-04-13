@@ -139,32 +139,140 @@ class HybridToolSearcher:
         
         return [(float(similarities[idx]), int(idx)) for idx in top_indices]
     
+    def _normalize_scores(self, scores: List[float]) -> List[float]:
+        """
+        Normalize scores to [0, 1] range using min-max scaling.
+        Preserves ranking while making scores comparable across methods.
+        """
+        if not scores:
+            return []
+        
+        scores_array = np.array(scores)
+        min_score = np.min(scores_array)
+        max_score = np.max(scores_array)
+        
+        if max_score == min_score:
+            return [0.5] * len(scores)  # Default to neutral if all equal
+        
+        normalized = (scores_array - min_score) / (max_score - min_score)
+        return normalized.tolist()
+    
+    def _normalize_scores_softmax(self, scores: List[float], temperature: float = 1.0) -> List[float]:
+        """
+        Alternative: Softmax normalization for probability distribution.
+        Better when you want to emphasize top results.
+        """
+        if not scores:
+            return []
+        
+        scores_array = np.array(scores)
+        exp_scores = np.exp(scores_array / temperature)
+        normalized = exp_scores / np.sum(exp_scores)
+        return normalized.tolist()
+    
+    def _normalize_scores_rank(self, scores: List[float]) -> List[float]:
+        """
+        Alternative: Rank-based normalization (1 - rank/total).
+        Robust to outliers but loses score magnitude information.
+        """
+        if not scores:
+            return []
+        
+        # Get ranks (1 = highest score)
+        sorted_indices = np.argsort(scores)[::-1]
+        ranks = np.zeros(len(scores))
+        for rank, idx in enumerate(sorted_indices):
+            ranks[idx] = rank + 1
+        
+        # Convert rank to score (1 - normalized rank)
+        normalized = 1 - (ranks - 1) / len(scores)
+        return normalized.tolist()
+    
+    
     def _fuse_scores(self, bm25_results: List[Tuple[float, int]], 
-                     dense_results: List[Tuple[float, int]]) -> List[Tuple[float, int]]:
+                     dense_results: List[Tuple[float, int]],
+                     normalization: str = "minmax"
+                     ) -> List[Tuple[float, int]]:
         """
         Fuse BM25 and dense scores using weighted sum
         Returns list of (fused_score, index) sorted descending
         """
+        all_indices = set()
         score_map = {}
+        
+        
+        for _, idx in bm25_results:
+            all_indices.add(idx)
+        for _, idx in dense_results:
+            all_indices.add(idx)
+        
+        # Create score vectors for normalization
+        bm25_scores_by_idx = {}
+        dense_scores_by_idx = {}
         
         # Add BM25 scores
         for score, idx in bm25_results:
-            score_map[idx] = Config.BM25_WEIGHT * score
+            bm25_scores_by_idx[idx] = score
         
-        # Add dense scores
         for score, idx in dense_results:
-            if idx in score_map:
-                score_map[idx] += Config.DENSE_WEIGHT * score
-            else:
-                score_map[idx] = Config.DENSE_WEIGHT * score
+            dense_scores_by_idx[idx] = score
+        
+        # Build aligned score lists for normalization
+        indices_list = list(all_indices)
+        bm25_vector = [bm25_scores_by_idx.get(idx, 0) for idx in indices_list]
+        dense_vector = [dense_scores_by_idx.get(idx, 0) for idx in indices_list]
+        
+        # Normalize scores
+        if normalization == "minmax":
+            bm25_normalized = self._normalize_scores(bm25_vector)
+            dense_normalized = self._normalize_scores(dense_vector)
+        elif normalization == "softmax":
+            bm25_normalized = self._normalize_scores_softmax(bm25_vector, temperature=0.5)
+            dense_normalized = self._normalize_scores_softmax(dense_vector, temperature=0.5)
+        elif normalization == "rank":
+            bm25_normalized = self._normalize_scores_rank(bm25_vector)
+            dense_normalized = self._normalize_scores_rank(dense_vector)
+        else:
+            raise ValueError(f"Unknown normalization: {normalization}")
+        
+        # Weighted fusion with normalized scores
+        fused_results = []
+        for i, idx in enumerate(indices_list):
+            fused_score = (Config.BM25_WEIGHT * bm25_normalized[i] + 
+                          Config.DENSE_WEIGHT * dense_normalized[i])
+            fused_results.append((fused_score, idx))
+        
+        # Sort by fused score descending
+        fused_results.sort(key=lambda x: x[0], reverse=True)
+        
+        return fused_results[:Config.FUSION_CANDIDATES]
+    
+    def _fuse_scores_reciprocal_rank(self, 
+                                     bm25_results: List[Tuple[float, int]], 
+                                     dense_results: List[Tuple[float, int]],
+                                     k: int = 60) -> List[Tuple[float, int]]:
+        """
+        Alternative: Reciprocal Rank Fusion (RRF).
+        Doesn't require score normalization, only ranks.
+        Often works better than weighted fusion for search.
+        """
+        rrf_scores = {}
+        
+        # Process BM25 results
+        for rank, (_, idx) in enumerate(bm25_results, start=1):
+            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1 / (k + rank)
+        
+        # Process dense results
+        for rank, (_, idx) in enumerate(dense_results, start=1):
+            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1 / (k + rank)
         
         # Convert to list and sort
-        fused = [(score, idx) for idx, score in score_map.items()]
+        fused = [(score, idx) for idx, score in rrf_scores.items()]
         fused.sort(key=lambda x: x[0], reverse=True)
         
         return fused[:Config.FUSION_CANDIDATES]
     
-    def search(self, query: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+    def search(self, query: str, top_k: Optional[int] = None, fusion_method: str = "rrf") -> List[Dict[str, Any]]:
         """
         Complete hybrid search pipeline.
         
@@ -174,20 +282,32 @@ class HybridToolSearcher:
         """
         start_time = time.time()
         
+        if not self.is_indexed:
+            raise RuntimeError("Must call index() before search()")
+    
         
         if top_k is None:
             top_k = Config.FINAL_RESULTS
         
         # Stage 1: BM25 lexical search
-        bm25_start = time.time()
         bm25_results = self._bm25_search(query)
            
         # Stage 2: Dense semantic search
-        dense_start = time.time()
         dense_results = self._dense_search(query)
        
         # Stage 3: Score fusion
-        fused_results = self._fuse_scores(bm25_results, dense_results)
+        if fusion_method == "rrf":
+            # Reciprocal Rank Fusion (recommended)
+            fused_results = self._fuse_scores_reciprocal_rank(bm25_results, dense_results)
+        elif fusion_method == "weighted":
+            # Weighted with min-max normalization
+            fused_results = self._fuse_scores(bm25_results, dense_results, normalization="minmax")
+        elif fusion_method == "weighted_rank":
+            # Weighted with rank normalization
+            fused_results = self._fuse_scores(bm25_results, dense_results, normalization="rank")
+        else:
+            raise ValueError(f"Unknown fusion_method: {fusion_method}")
+        
           
         if not fused_results:
             return []

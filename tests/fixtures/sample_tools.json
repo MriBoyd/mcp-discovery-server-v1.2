@@ -1,0 +1,14 @@
+# tests/fixtures/sample_tools.json
+{
+  "tools": [
+    {
+      "name": "github_create_issue",
+      "description": "Create a GitHub issue",
+      "parameters": {
+        "repo": {"type": "string"},
+        "title": {"type": "string"}
+      },
+      "required": ["repo", "title"]
+    }
+  ]
+}
