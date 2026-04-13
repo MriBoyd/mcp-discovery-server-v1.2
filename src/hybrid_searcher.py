@@ -78,13 +78,15 @@ class HybridToolSearcher:
         logger.info("Building BM25 index...")
         tokenized_corpus = [text.lower().split() for text in self.tool_texts]
         self.bm25 = BM25Okapi(tokenized_corpus)
+
+        embeddings_list = self.embedder.batch_encode_tools(self.tool_texts)
         
         # Initialize embedder and generate dense vectors
         logger.info("Initializing Code Embedder...")
         
         logger.info("Generating dense embeddings...")
-        self.tool_embeddings = self.embedder.batch_encode_tools(self.tool_texts)
-        
+        self.tool_embeddings = np.array(embeddings_list, dtype=np.float32)        
+        self.is_indexed = True
         # Initialize reranker
         logger.info("Initializing Reranker...")
         
@@ -122,6 +124,11 @@ class HybridToolSearcher:
 
         if self.tool_embeddings is None:
             raise RuntimeError("Must call index() before search()")
+        
+        if not isinstance(self.tool_embeddings, np.ndarray):
+            logger.warning("Converting tool_embeddings to numpy array...")
+            self.tool_embeddings = np.array(self.tool_embeddings, dtype=np.float32)
+    
         
         if top_k is None:
             top_k = Config.DENSE_CANDIDATES

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from typing import List, Dict, Any
 import logging
-import src.config as Config
+from src.config import Config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
