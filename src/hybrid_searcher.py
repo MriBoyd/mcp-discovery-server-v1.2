@@ -67,32 +67,24 @@ class HybridToolSearcher:
         """
         Index all tools with BM25 and dense embeddings
         """
-        logger.info(f"Indexing {len(tools)} tools...")
         self.tools = tools
         
         # Prepare searchable texts
-        logger.info("Preparing tool texts...")
         self.tool_texts = [self._prepare_tool_text(tool) for tool in tools]
         
         # Build BM25 index (lexical)
-        logger.info("Building BM25 index...")
         tokenized_corpus = [text.lower().split() for text in self.tool_texts]
         self.bm25 = BM25Okapi(tokenized_corpus)
 
         embeddings_list = self.embedder.batch_encode_tools(self.tool_texts)
         
         # Initialize embedder and generate dense vectors
-        logger.info("Initializing Code Embedder...")
         
-        logger.info("Generating dense embeddings...")
         self.tool_embeddings = np.array(embeddings_list, dtype=np.float32)        
         self.is_indexed = True
         # Initialize reranker
-        logger.info("Initializing Reranker...")
         
-        
-        logger.info(f"Indexing complete! {len(self.tools)} tools ready.")
-    
+            
     def _bm25_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
         """
         BM25 lexical search
