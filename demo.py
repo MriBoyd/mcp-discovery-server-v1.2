@@ -4,7 +4,7 @@ from src.hybrid_searcher import HybridToolSearcher
 
 def main():
     # Load your tools
-    with open('tools/sample_tools.json', 'r') as f:
+    with open('tools/all_tools.json', 'r') as f:
         data = json.load(f)
         tools = data if isinstance(data, list) else data.get('tools', [])
     
