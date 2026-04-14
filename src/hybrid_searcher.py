@@ -98,7 +98,8 @@ class HybridToolSearcher:
         
         # 2. Check if Qdrant already has data
         collection_info = self.qdrant.get_collection(Config.QDRANT_COLLECTION)
-        if collection_info.points_count > 0 and not force_reindex:
+        points_count = collection_info.points_count or 0
+        if points_count > 0 and not force_reindex:
             logger.info(f"Qdrant collection already indexed with {collection_info.points_count} points.")
             self.is_indexed = True
             return
@@ -160,13 +161,13 @@ class HybridToolSearcher:
         query_embedding = self.embedder.encode_query(query)
         
         # Search Qdrant
-        search_result = self.qdrant.search(
+        search_result = self.qdrant.query_points(
             collection_name=Config.QDRANT_COLLECTION,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=top_k
         )
         
-        return [(hit.score, int(hit.id)) for hit in search_result]
+        return [(hit.score, int(hit.id)) for hit in search_result.points]
     
     def _normalize_scores(self, scores: List[float]) -> List[float]:
         """Normalize scores to [0, 1] range using min-max scaling."""
