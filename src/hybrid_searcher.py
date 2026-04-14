@@ -46,7 +46,7 @@ class HybridToolSearcher:
         self._ensure_collection()
         
     def _ensure_collection(self):
-        """Ensure Qdrant collection exists"""
+        """Ensure Qdrant collection exists and load tool data if needed"""
         collections = self.qdrant.get_collections().collections
         exists = any(c.name == Config.QDRANT_COLLECTION for c in collections)
         
@@ -59,6 +59,22 @@ class HybridToolSearcher:
                     distance=Distance.COSINE
                 )
             )
+        else:
+            # Load tools from existing collection to populate self.tools and self.tool_texts
+            # This is a simple approach: scroll all points
+            logger.info("Loading tools from existing Qdrant collection...")
+            points, _ = self.qdrant.scroll(collection_name=Config.QDRANT_COLLECTION, limit=1000)
+            
+            # Sort points by ID
+            points.sort(key=lambda p: p.id)
+            
+            self.tools = [{"name": p.payload["name"]} for p in points]
+            self.tool_texts = [p.payload["text"] for p in points]
+            
+            # Rebuild BM25
+            tokenized_corpus = [text.lower().split() for text in self.tool_texts]
+            self.bm25 = BM25Okapi(tokenized_corpus)
+            self.is_indexed = True
     
     def _prepare_tool_text(self, tool: Dict[str, Any]) -> str:
         """
@@ -109,10 +125,10 @@ class HybridToolSearcher:
         points = [
             PointStruct(
                 id=i,
-                vector=emb,
+                vector=embeddings_list[i],
                 payload={"name": tools[i]['name'], "text": self.tool_texts[i]}
             )
-            for i, emb in enumerate(embeddings_list)
+            for i in range(len(tools))
         ]
         
         # Batch upload to Qdrant
@@ -243,9 +259,12 @@ class HybridToolSearcher:
             return []
         
         # Stage 4: Rerank with cross-encoder
-        candidate_indices = [idx for _, idx in fused_results]
+        candidate_indices = [idx for _, idx in fused_results if idx < len(self.tool_texts)]
         candidate_documents = [self.tool_texts[idx] for idx in candidate_indices]
         
+        if not candidate_documents:
+            return []
+            
         actual_top_k = min(top_k, len(candidate_documents))
         reranked = self.reranker.rerank(query, candidate_documents, top_n=actual_top_k)
         
