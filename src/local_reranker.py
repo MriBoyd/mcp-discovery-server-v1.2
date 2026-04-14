@@ -15,8 +15,8 @@ class LocalReranker:
     Cross-encoder that scores (query, document) pairs jointly
     """
     
-    def __init__(self, model_path: str = "jinaai/jina-reranker-v3", 
-                 cache_dir: str = "./models"):
+    def __init__(self, model_path: str = "./re-rank", 
+                 cache_dir: str = "."):
         self.model_path = model_path
         self.cache_dir = cache_dir
         
@@ -31,7 +31,8 @@ class LocalReranker:
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             cache_dir=cache_dir,
-            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            torch_dtype=torch.float32, 
             local_files_only=True
         )
         self.model.eval()
@@ -64,13 +65,12 @@ class LocalReranker:
             truncation=True,
             max_length=512,
             return_tensors="pt"
-        )
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+        ).to(self.model.device)
         
         # Score
         with torch.no_grad():
-            scores = self.model(**inputs).logits.squeeze(-1)
-            scores = torch.sigmoid(scores)  # Convert to [0,1] range
+            outputs = self.model(**inputs)
+            scores = outputs.logits.squeeze(-1).cpu().numpy().tolist()
         
         # Convert to list
         scores = scores.cpu().numpy().tolist()
@@ -84,7 +84,7 @@ class LocalReranker:
         for idx, score in indexed_scores[:top_n]:
             results.append({
                 'index': idx,
-                'relevance_score': score,
+                'relevance_score': float(score),
                 'document': documents[idx]
             })
         

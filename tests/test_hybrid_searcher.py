@@ -235,7 +235,7 @@ class TestConfig(unittest.TestCase):
     
     def test_embedding_dimension(self):
         """Test embedding dimension is correct for Jina model"""
-        self.assertEqual(Config.EMBEDDING_DIM, 1536)
+        self.assertEqual(Config.EMBEDDING_DIM, 896)
     
     def test_fusion_weights(self):
         """Test fusion weights sum to 1.0"""
@@ -503,8 +503,8 @@ class TestMockedComponents(unittest.TestCase):
         """Test with mocked embedder"""
         # Setup mocks
         mock_embedder_instance = Mock()
-        mock_embedder_instance.batch_encode_tools.return_value = [[0.1] * 1536] * 3
-        mock_embedder_instance.encode_query.return_value = [0.1] * 1536
+        mock_embedder_instance.batch_encode_tools.return_value = [[0.1] * 896] * 3
+        mock_embedder_instance.encode_query.return_value = [0.1] * 896
         mock_embedder.return_value = mock_embedder_instance
         
         mock_reranker_instance = Mock()

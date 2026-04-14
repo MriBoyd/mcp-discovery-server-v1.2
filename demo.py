@@ -16,7 +16,7 @@ def main():
     
     # Interactive search
     print("\n🔍 Offline Hybrid Tool Search")
-    print("Models: Jina Code Embeddings 1.5B + Jina Reranker v3")
+    print("Models: Jina Code Embeddings 0.5B + Jina Reranker v3")
     print("=" * 60)
     
     while True:

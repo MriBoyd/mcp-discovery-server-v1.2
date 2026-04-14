@@ -30,8 +30,8 @@ class CodeEmbedder:
         }
     }
     
-    def __init__(self, model_path: str = "jinaai/jina-code-embeddings-1.5b", 
-                 cache_dir: str = "./models"):
+    def __init__(self, model_path: str = "./embed-models", 
+                 cache_dir: str = "."):
         self.model_path = model_path
         self.cache_dir = cache_dir
         
@@ -46,7 +46,7 @@ class CodeEmbedder:
         self.model = AutoModel.from_pretrained(
             model_path,
             cache_dir=cache_dir,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             local_files_only=True
         )
         self.model.eval()
@@ -103,7 +103,7 @@ class CodeEmbedder:
         # Normalize
         embeddings = F.normalize(embeddings, p=2, dim=1)
         
-        return embeddings.cpu().numpy().tolist()
+        return embeddings.cpu().to(torch.float32).numpy().tolist()
     
     def encode_tool(self, tool_text: str) -> List[float]:
         """Encode a tool for indexing (as passage)"""
