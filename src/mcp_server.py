@@ -277,9 +277,7 @@ Tool search query: search_tools(query="{user_goal}")
 
 async def main():
     """Run the MCP server using stdio transport."""
-    async with mcp.run_stdio_async():
-        # Keep the server running
-        await asyncio.Event().wait()
+    await mcp.run_stdio_async()
 
 if __name__ == "__main__":
     asyncio.run(main())
