@@ -93,7 +93,7 @@ async def search_tools(
         )
         
         # Perform hybrid search
-        results = searcher.search(query)
+        results = await asyncio.to_thread(searcher.search, query)
         
         await ctx.report_progress(
             progress=0.8,
@@ -149,7 +149,7 @@ async def get_tool_schema(
     searcher = ctx.request_context.lifespan_context.searcher
     
     # Search for exact match
-    results = searcher.search(tool_name, top_k=5)
+    results = await asyncio.to_thread(searcher.search, tool_name, top_k=5)
     
     for result in results:
         if result['tool_name'] == tool_name:
@@ -180,7 +180,7 @@ async def execute_tool(
     searcher = ctx.request_context.lifespan_context.searcher
     
     # Find the tool
-    results = searcher.search(tool_name, top_k=3)
+    results = await asyncio.to_thread(searcher.search, tool_name, top_k=3)
     tool = None
     
     for result in results:
@@ -244,7 +244,7 @@ async def list_all_tools(ctx: Context[ServerSession, AppContext]) -> str:
 async def get_tool_by_name(name: str, ctx: Context[ServerSession, AppContext]) -> str:
     """Get details of a specific tool by name."""
     searcher = ctx.request_context.lifespan_context.searcher
-    results = searcher.search(name, top_k=5)
+    results = await asyncio.to_thread(searcher.search, name, top_k=5)
     
     for result in results:
         if result['tool_name'] == name:
