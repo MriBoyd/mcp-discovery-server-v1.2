@@ -62,28 +62,26 @@ class HybridToolSearcher:
     
     def _prepare_tool_text(self, tool: Dict[str, Any]) -> str:
         """
-        Prepare rich text representation for a tool
-        Optimized for both BM25 and dense retrieval
+        Prepare a compressed, signature-like representation for a tool.
+        Emphasizes parameter names and types for better capability matching.
         """
-        parts = [
-            f"Function: {tool['name']}",
-            f"Description: {tool['description']}"
-        ]
+        name = tool.get('name', 'unknown')
+        desc = tool.get('description', '')
         
-        # Add parameters with their types (critical for exact matching)
-        if tool.get('parameters'):
-            param_lines = ["Parameters:"]
-            for param_name, param_info in tool['parameters'].items():
-                param_type = param_info.get('type', 'unknown')
-                param_desc = param_info.get('description', '')
-                param_lines.append(f"  - {param_name} ({param_type}): {param_desc}")
-            parts.extend(param_lines)
+        # Build parameter signature: param:type
+        params = tool.get('parameters', {})
+        required = tool.get('required', [])
         
-        # Add required parameters
-        if tool.get('required'):
-            parts.append(f"Required parameters: {', '.join(tool['required'])}")
+        param_parts = []
+        for p_name, p_info in params.items():
+            p_type = p_info.get('type', 'any')
+            is_req = "*" if p_name in required else ""
+            param_parts.append(f"{p_name}{is_req}:{p_type}")
         
-        return "\n".join(parts)
+        sig = f"{name}({', '.join(param_parts)})"
+        
+        # Combine signature with a concise description
+        return f"Tool: {sig}\nDescription: {desc}"
     
     def index(self, tools: List[Dict[str, Any]], force_reindex: bool = False):
         """
