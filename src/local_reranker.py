@@ -1,8 +1,8 @@
 # src/local_reranker.py
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from typing import List, Dict, Any
+from transformers import AutoModel, AutoTokenizer
+from typing import List, Dict, Any, Optional
 import logging
 from src.config import Config
 
@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 class LocalReranker:
     """
-    Local Jina Reranker v3 for final precision ranking
-    Cross-encoder that scores (query, document) pairs jointly
+    Local Jina Reranker v3 for final precision ranking.
+    Uses custom JinaForRanking architecture from the model directory.
     """
     
     def __init__(self, model_path: str = "./re-rank", 
@@ -26,9 +26,13 @@ class LocalReranker:
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
             cache_dir=cache_dir,
-            local_files_only=True
+            local_files_only=True,
+            trust_remote_code=True
         )
-        self.model = AutoModelForSequenceClassification.from_pretrained(
+        
+        # Use AutoModel instead of AutoModelForSequenceClassification
+        # This will use the JinaForRanking class defined in modeling.py
+        self.model = AutoModel.from_pretrained(
             model_path,
             cache_dir=cache_dir,
             trust_remote_code=True,
@@ -38,11 +42,14 @@ class LocalReranker:
         self.model.eval()
         self.model.to(Config.DEVICE)
         
+        # Inject tokenizer into model to avoid redundant loading in its internal methods
+        self.model._tokenizer = self.tokenizer
+        
         logger.info(f"Reranker loaded on {Config.DEVICE}")
     
-    def rerank(self, query: str, documents: List[str], top_n: int = 5) -> List[Dict[str, Any]]:
+    def rerank(self, query: str, documents: List[str], top_n: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Rerank documents based on relevance to query
+        Rerank documents based on relevance to query using the model's built-in rerank logic.
         
         Args:
             query: Search query
@@ -55,37 +62,24 @@ class LocalReranker:
         if top_n is None:
             top_n = Config.FINAL_RESULTS
         
-        # Format pairs for cross-encoder
-        pairs = [[query, doc] for doc in documents]
+        if not documents:
+            return []
+            
+        # Use the model's native rerank method which handles the specific prompt format
+        # and cosine similarity logic for Jina Reranker v3.
+        results = self.model.rerank(
+            query=query,
+            documents=documents,
+            top_n=top_n
+        )
         
-        # Tokenize
-        inputs = self.tokenizer(
-            pairs,
-            padding=True,
-            truncation=True,
-            max_length=512,
-            return_tensors="pt"
-        ).to(self.model.device)
-        
-        # Score
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            scores = outputs.logits.squeeze(-1).cpu().numpy().tolist()
-        
-        # Convert to list
-        scores = scores.cpu().numpy().tolist()
-        
-        # Sort by score
-        indexed_scores = list(enumerate(scores))
-        indexed_scores.sort(key=lambda x: x[1], reverse=True)
-        
-        # Return top_n
-        results = []
-        for idx, score in indexed_scores[:top_n]:
-            results.append({
-                'index': idx,
-                'relevance_score': float(score),
-                'document': documents[idx]
-            })
-        
-        return results
+        # Ensure the results match the expected format: {'index', 'relevance_score', 'document'}
+        # JinaForRanking.rerank returns {'index', 'relevance_score', 'document', 'embedding'}
+        return [
+            {
+                'index': item['index'],
+                'relevance_score': float(item['relevance_score']),
+                'document': item['document']
+            }
+            for item in results
+        ]
