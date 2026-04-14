@@ -86,53 +86,57 @@ class HybridToolSearcher:
         
             
     def _bm25_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
-        """
-        BM25 lexical search
-        Returns list of (score, index) tuples
-        """
+        """BM25 lexical search with bounds checking"""
+        if self.bm25 is None:
+            return []
+        
         if top_k is None:
             top_k = Config.BM25_CANDIDATES
-        
-        if self.bm25 is None:
-            logger.warning("BM25 not initialized. Call index() first.")
-            return []
         
         tokenized_query = query.lower().split()
         scores = self.bm25.get_scores(tokenized_query)
         
+        # Bounds checking
+        num_scores = len(scores)
+        if num_scores == 0:
+            return []
+        
+        actual_k = max(1, min(top_k, num_scores))  # Ensure at least 1
+        
         # Get top-k indices
-        top_indices = np.argpartition(scores, -top_k)[-top_k:]
-        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+        if actual_k < num_scores:
+            top_indices = np.argpartition(scores, -actual_k)[-actual_k:]
+            top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+        else:
+            top_indices = np.argsort(scores)[::-1]
         
         return [(float(scores[idx]), int(idx)) for idx in top_indices if scores[idx] > 0]
     
-    def _dense_search(self, query: str, top_k: int = 5) -> List[Tuple[float, int]]:
-        """
-        Dense semantic search with Jina Code Embeddings
-        Returns list of (score, index) tuples
-        """
-        
-        """Dense semantic search"""
-
+    def _dense_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
+        """Dense semantic search with bounds checking"""
         if self.tool_embeddings is None:
             raise RuntimeError("Must call index() before search()")
-        
-        if not isinstance(self.tool_embeddings, np.ndarray):
-            logger.warning("Converting tool_embeddings to numpy array...")
-            self.tool_embeddings = np.array(self.tool_embeddings, dtype=np.float32)
-    
         
         if top_k is None:
             top_k = Config.DENSE_CANDIDATES
         
         # Encode query
         query_embedding = self.embedder.encode_query(query)
-        query_vec = np.array(query_embedding)
+        query_vec = np.array(query_embedding, dtype=np.float32)
         
-        # Compute cosine similarities
+        # Get similarities
         similarities = np.dot(self.tool_embeddings, query_vec)
-        if len(similarities) > top_k:
-            top_indices = np.argpartition(similarities, -top_k)[-top_k:]
+        
+        # Bounds checking
+        num_scores = len(similarities)
+        if num_scores == 0:
+            return []
+        
+        actual_k = max(1, min(top_k, num_scores))  # Ensure at least 1
+        
+        # Get top-k indices
+        if actual_k < num_scores:
+            top_indices = np.argpartition(similarities, -actual_k)[-actual_k:]
             top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
         else:
             top_indices = np.argsort(similarities)[::-1]
@@ -272,56 +276,41 @@ class HybridToolSearcher:
         
         return fused[:Config.FUSION_CANDIDATES]
     
-    def search(self, query: str, top_k: Optional[int] = None, fusion_method: str = "rrf") -> List[Dict[str, Any]]:
-        """
-        Complete hybrid search pipeline.
-        
-        Args:
-            query: Search query
-            top_k: Number of results to return (default 5)
-        """
-        start_time = time.time()
-        
+    def search(self, query: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Complete hybrid search pipeline"""
         if not self.is_indexed:
             raise RuntimeError("Must call index() before search()")
-    
         
         if top_k is None:
             top_k = Config.FINAL_RESULTS
         
+        # Ensure top_k is valid
+        if top_k <= 0:
+            top_k = 1
+        
+        start_time = time.time()
+        
         # Stage 1: BM25 lexical search
         bm25_results = self._bm25_search(query)
-           
+        
         # Stage 2: Dense semantic search
         dense_results = self._dense_search(query)
-       
-        # Stage 3: Score fusion
-        if fusion_method == "rrf":
-            # Reciprocal Rank Fusion (recommended)
-            fused_results = self._fuse_scores_reciprocal_rank(bm25_results, dense_results)
-        elif fusion_method == "weighted":
-            # Weighted with min-max normalization
-            fused_results = self._fuse_scores(bm25_results, dense_results, normalization="minmax")
-        elif fusion_method == "weighted_rank":
-            # Weighted with rank normalization
-            fused_results = self._fuse_scores(bm25_results, dense_results, normalization="rank")
-        else:
-            raise ValueError(f"Unknown fusion_method: {fusion_method}")
         
-          
+        # Stage 3: Score fusion
+        fused_results = self._fuse_scores(bm25_results, dense_results)
+        
         if not fused_results:
             return []
         
         # Stage 4: Rerank with cross-encoder
         candidate_indices = [idx for _, idx in fused_results]
         candidate_documents = [self.tool_texts[idx] for idx in candidate_indices]
-        reranked = self.reranker.rerank(
-            query, 
-            candidate_documents, 
-            top_n=top_k  # Use parameter here
-        )
-                
-        # Build final results
+        
+        # Ensure top_k doesn't exceed candidates
+        actual_top_k = min(top_k, len(candidate_documents))
+        
+        reranked = self.reranker.rerank(query, candidate_documents, top_n=actual_top_k)
+        
         # Build final results
         final_results = []
         for rerank_item in reranked:
@@ -336,5 +325,4 @@ class HybridToolSearcher:
             })
         
         logger.debug(f"Search completed in {time.time() - start_time:.3f}s")
-        
-        return final_results[:top_k]
+        return final_results

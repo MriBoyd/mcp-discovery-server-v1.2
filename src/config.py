@@ -14,10 +14,10 @@ class Config:
     RERANKER_MODEL = "./re-rank"  # or GGUF version
     
     # Search settings
-    BM25_CANDIDATES = 100      # Initial BM25 retrieval
-    DENSE_CANDIDATES = 100     # Initial dense retrieval
-    FUSION_CANDIDATES = 50     # Candidates after fusion
-    FINAL_RESULTS = 5          # Top results after reranking
+    BM25_CANDIDATES = 10      # Initial BM25 retrieval
+    DENSE_CANDIDATES = 10     # Initial dense retrieval
+    FUSION_CANDIDATES = 10     # Candidates after fusion
+    FINAL_RESULTS = 3          # Top results after reranking
     
     # Fusion weights (BM25 : Dense)
     BM25_WEIGHT = 0.3
@@ -32,3 +32,5 @@ class Config:
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["SENTENCE_TRANSFORMERS_HOME"] = MODEL_CACHE_DIR
+    
+    
