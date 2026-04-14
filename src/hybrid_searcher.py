@@ -6,6 +6,9 @@ from typing import List, Dict, Any, Tuple, Optional
 from tqdm import tqdm
 import logging
 
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+
 from src.code_embedder import CodeEmbedder
 from src.local_reranker import LocalReranker
 from src.config import Config
@@ -17,7 +20,7 @@ class HybridToolSearcher:
     """
     Three-stage hybrid search:
     1. BM25 for exact lexical matching (tool names, parameters)
-    2. Dense semantic search with Jina Code Embeddings
+    2. Dense semantic search with Qdrant + Jina Code Embeddings
     3. Cross-encoder reranking for final precision
     """
     
@@ -25,9 +28,9 @@ class HybridToolSearcher:
         self.bm25 = None
         self.tools = []
         self.tool_texts = []
-        self.tool_embeddings = None
+        self.is_indexed = False
         
-        # ← Initialize embedder immediately
+        # Initialize embedder and reranker
         self.embedder = CodeEmbedder(
             model_path=Config.CODE_EMBEDDING_MODEL,
             cache_dir=Config.MODEL_CACHE_DIR
@@ -37,6 +40,25 @@ class HybridToolSearcher:
             cache_dir=Config.MODEL_CACHE_DIR
         )
         
+        # Initialize Qdrant Client
+        logger.info(f"Connecting to Qdrant at {Config.QDRANT_URL}...")
+        self.qdrant = QdrantClient(url=Config.QDRANT_URL)
+        self._ensure_collection()
+        
+    def _ensure_collection(self):
+        """Ensure Qdrant collection exists"""
+        collections = self.qdrant.get_collections().collections
+        exists = any(c.name == Config.QDRANT_COLLECTION for c in collections)
+        
+        if not exists:
+            logger.info(f"Creating Qdrant collection: {Config.QDRANT_COLLECTION}")
+            self.qdrant.create_collection(
+                collection_name=Config.QDRANT_COLLECTION,
+                vectors_config=VectorParams(
+                    size=Config.EMBEDDING_DIM,
+                    distance=Distance.COSINE
+                )
+            )
     
     def _prepare_tool_text(self, tool: Dict[str, Any]) -> str:
         """
@@ -63,27 +85,46 @@ class HybridToolSearcher:
         
         return "\n".join(parts)
     
-    def index(self, tools: List[Dict[str, Any]]):
+    def index(self, tools: List[Dict[str, Any]], force_reindex: bool = False):
         """
-        Index all tools with BM25 and dense embeddings
+        Index all tools with BM25 and Qdrant
         """
         self.tools = tools
-        
-        # Prepare searchable texts
         self.tool_texts = [self._prepare_tool_text(tool) for tool in tools]
         
-        # Build BM25 index (lexical)
+        # 1. Build BM25 index (lexical)
         tokenized_corpus = [text.lower().split() for text in self.tool_texts]
         self.bm25 = BM25Okapi(tokenized_corpus)
+        
+        # 2. Check if Qdrant already has data
+        collection_info = self.qdrant.get_collection(Config.QDRANT_COLLECTION)
+        if collection_info.points_count > 0 and not force_reindex:
+            logger.info(f"Qdrant collection already indexed with {collection_info.points_count} points.")
+            self.is_indexed = True
+            return
 
+        # 3. Generate embeddings and upload to Qdrant
+        logger.info(f"Generating embeddings for {len(tools)} tools...")
         embeddings_list = self.embedder.batch_encode_tools(self.tool_texts)
         
-        # Initialize embedder and generate dense vectors
+        points = [
+            PointStruct(
+                id=i,
+                vector=emb,
+                payload={"name": tools[i]['name'], "text": self.tool_texts[i]}
+            )
+            for i, emb in enumerate(embeddings_list)
+        ]
         
-        self.tool_embeddings = np.array(embeddings_list, dtype=np.float32)        
+        # Batch upload to Qdrant
+        logger.info(f"Uploading {len(points)} points to Qdrant...")
+        self.qdrant.upsert(
+            collection_name=Config.QDRANT_COLLECTION,
+            points=points
+        )
+        
         self.is_indexed = True
-        # Initialize reranker
-        
+        logger.info("Indexing complete.")
             
     def _bm25_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
         """BM25 lexical search with bounds checking"""
@@ -96,14 +137,12 @@ class HybridToolSearcher:
         tokenized_query = query.lower().split()
         scores = self.bm25.get_scores(tokenized_query)
         
-        # Bounds checking
         num_scores = len(scores)
         if num_scores == 0:
             return []
         
-        actual_k = max(1, min(top_k, num_scores))  # Ensure at least 1
+        actual_k = max(1, min(top_k, num_scores))
         
-        # Get top-k indices
         if actual_k < num_scores:
             top_indices = np.argpartition(scores, -actual_k)[-actual_k:]
             top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
@@ -113,41 +152,24 @@ class HybridToolSearcher:
         return [(float(scores[idx]), int(idx)) for idx in top_indices if scores[idx] > 0]
     
     def _dense_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
-        """Dense semantic search with bounds checking"""
-        if self.tool_embeddings is None:
-            raise RuntimeError("Must call index() before search()")
-        
+        """Dense semantic search using Qdrant"""
         if top_k is None:
             top_k = Config.DENSE_CANDIDATES
         
         # Encode query
         query_embedding = self.embedder.encode_query(query)
-        query_vec = np.array(query_embedding, dtype=np.float32)
         
-        # Get similarities
-        similarities = np.dot(self.tool_embeddings, query_vec)
+        # Search Qdrant
+        search_result = self.qdrant.search(
+            collection_name=Config.QDRANT_COLLECTION,
+            query_vector=query_embedding,
+            limit=top_k
+        )
         
-        # Bounds checking
-        num_scores = len(similarities)
-        if num_scores == 0:
-            return []
-        
-        actual_k = max(1, min(top_k, num_scores))  # Ensure at least 1
-        
-        # Get top-k indices
-        if actual_k < num_scores:
-            top_indices = np.argpartition(similarities, -actual_k)[-actual_k:]
-            top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
-        else:
-            top_indices = np.argsort(similarities)[::-1]
-        
-        return [(float(similarities[idx]), int(idx)) for idx in top_indices]
+        return [(hit.score, int(hit.id)) for hit in search_result]
     
     def _normalize_scores(self, scores: List[float]) -> List[float]:
-        """
-        Normalize scores to [0, 1] range using min-max scaling.
-        Preserves ranking while making scores comparable across methods.
-        """
+        """Normalize scores to [0, 1] range using min-max scaling."""
         if not scores:
             return []
         
@@ -156,42 +178,10 @@ class HybridToolSearcher:
         max_score = np.max(scores_array)
         
         if max_score == min_score:
-            return [0.5] * len(scores)  # Default to neutral if all equal
+            return [0.5] * len(scores)
         
         normalized = (scores_array - min_score) / (max_score - min_score)
         return normalized.tolist()
-    
-    def _normalize_scores_softmax(self, scores: List[float], temperature: float = 1.0) -> List[float]:
-        """
-        Alternative: Softmax normalization for probability distribution.
-        Better when you want to emphasize top results.
-        """
-        if not scores:
-            return []
-        
-        scores_array = np.array(scores)
-        exp_scores = np.exp(scores_array / temperature)
-        normalized = exp_scores / np.sum(exp_scores)
-        return normalized.tolist()
-    
-    def _normalize_scores_rank(self, scores: List[float]) -> List[float]:
-        """
-        Alternative: Rank-based normalization (1 - rank/total).
-        Robust to outliers but loses score magnitude information.
-        """
-        if not scores:
-            return []
-        
-        # Get ranks (1 = highest score)
-        sorted_indices = np.argsort(scores)[::-1]
-        ranks = np.zeros(len(scores))
-        for rank, idx in enumerate(sorted_indices):
-            ranks[idx] = rank + 1
-        
-        # Convert rank to score (1 - normalized rank)
-        normalized = 1 - (ranks - 1) / len(scores)
-        return normalized.tolist()
-    
     
     def _fuse_scores(self, bm25_results: List[Tuple[float, int]], 
                      dense_results: List[Tuple[float, int]],
@@ -199,82 +189,37 @@ class HybridToolSearcher:
                      ) -> List[Tuple[float, int]]:
         """
         Fuse BM25 and dense scores using weighted sum
-        Returns list of (fused_score, index) sorted descending
         """
         all_indices = set()
-        score_map = {}
-        
-        
         for _, idx in bm25_results:
             all_indices.add(idx)
         for _, idx in dense_results:
             all_indices.add(idx)
         
-        # Create score vectors for normalization
-        bm25_scores_by_idx = {}
-        dense_scores_by_idx = {}
+        if not all_indices:
+            return []
+
+        # Create score maps
+        bm25_scores_by_idx = {idx: score for score, idx in bm25_results}
+        dense_scores_by_idx = {idx: score for score, idx in dense_results}
         
-        # Add BM25 scores
-        for score, idx in bm25_results:
-            bm25_scores_by_idx[idx] = score
-        
-        for score, idx in dense_results:
-            dense_scores_by_idx[idx] = score
-        
-        # Build aligned score lists for normalization
         indices_list = list(all_indices)
         bm25_vector = [bm25_scores_by_idx.get(idx, 0) for idx in indices_list]
         dense_vector = [dense_scores_by_idx.get(idx, 0) for idx in indices_list]
         
-        # Normalize scores
-        if normalization == "minmax":
-            bm25_normalized = self._normalize_scores(bm25_vector)
-            dense_normalized = self._normalize_scores(dense_vector)
-        elif normalization == "softmax":
-            bm25_normalized = self._normalize_scores_softmax(bm25_vector, temperature=0.5)
-            dense_normalized = self._normalize_scores_softmax(dense_vector, temperature=0.5)
-        elif normalization == "rank":
-            bm25_normalized = self._normalize_scores_rank(bm25_vector)
-            dense_normalized = self._normalize_scores_rank(dense_vector)
-        else:
-            raise ValueError(f"Unknown normalization: {normalization}")
+        # Normalize
+        bm25_normalized = self._normalize_scores(bm25_vector)
+        dense_normalized = self._normalize_scores(dense_vector)
         
-        # Weighted fusion with normalized scores
+        # Weighted fusion
         fused_results = []
         for i, idx in enumerate(indices_list):
             fused_score = (Config.BM25_WEIGHT * bm25_normalized[i] + 
                           Config.DENSE_WEIGHT * dense_normalized[i])
             fused_results.append((fused_score, idx))
         
-        # Sort by fused score descending
         fused_results.sort(key=lambda x: x[0], reverse=True)
-        
         return fused_results[:Config.FUSION_CANDIDATES]
-    
-    def _fuse_scores_reciprocal_rank(self, 
-                                     bm25_results: List[Tuple[float, int]], 
-                                     dense_results: List[Tuple[float, int]],
-                                     k: int = 60) -> List[Tuple[float, int]]:
-        """
-        Alternative: Reciprocal Rank Fusion (RRF).
-        Doesn't require score normalization, only ranks.
-        Often works better than weighted fusion for search.
-        """
-        rrf_scores = {}
-        
-        # Process BM25 results
-        for rank, (_, idx) in enumerate(bm25_results, start=1):
-            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1 / (k + rank)
-        
-        # Process dense results
-        for rank, (_, idx) in enumerate(dense_results, start=1):
-            rrf_scores[idx] = rrf_scores.get(idx, 0) + 1 / (k + rank)
-        
-        # Convert to list and sort
-        fused = [(score, idx) for idx, score in rrf_scores.items()]
-        fused.sort(key=lambda x: x[0], reverse=True)
-        
-        return fused[:Config.FUSION_CANDIDATES]
     
     def search(self, query: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
         """Complete hybrid search pipeline"""
@@ -284,16 +229,12 @@ class HybridToolSearcher:
         if top_k is None:
             top_k = Config.FINAL_RESULTS
         
-        # Ensure top_k is valid
-        if top_k <= 0:
-            top_k = 1
-        
         start_time = time.time()
         
         # Stage 1: BM25 lexical search
         bm25_results = self._bm25_search(query)
         
-        # Stage 2: Dense semantic search
+        # Stage 2: Dense semantic search (Qdrant)
         dense_results = self._dense_search(query)
         
         # Stage 3: Score fusion
@@ -306,9 +247,7 @@ class HybridToolSearcher:
         candidate_indices = [idx for _, idx in fused_results]
         candidate_documents = [self.tool_texts[idx] for idx in candidate_indices]
         
-        # Ensure top_k doesn't exceed candidates
         actual_top_k = min(top_k, len(candidate_documents))
-        
         reranked = self.reranker.rerank(query, candidate_documents, top_n=actual_top_k)
         
         # Build final results

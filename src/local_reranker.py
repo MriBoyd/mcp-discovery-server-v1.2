@@ -36,7 +36,7 @@ class LocalReranker:
             model_path,
             cache_dir=cache_dir,
             trust_remote_code=True,
-            torch_dtype=torch.float32, 
+            dtype=torch.float32, 
             local_files_only=True
         )
         self.model.eval()

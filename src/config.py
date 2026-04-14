@@ -3,6 +3,7 @@ import os
 import torch 
 
 class Config:
+    
     # Model paths (local cache)
     MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", ".")
     
@@ -25,6 +26,10 @@ class Config:
     FUSION_METHOD = "rrf"  # "weighted", "rrf", or "weighted_rank"
     RRF_K = 60  # RRF constant (typical values: 60)
         
+    # Qdrant Vector DB
+    QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+    QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "mcp_tools")
+    
     # Device
     DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
     
