@@ -68,8 +68,10 @@ class HybridToolSearcher:
             # Sort points by ID
             points.sort(key=lambda p: p.id)
             
-            self.tools = [{"name": p.payload["name"]} for p in points]
-            self.tool_texts = [p.payload["text"] for p in points]
+            
+            
+            self.tools = [{"name": p.payload.get("name", "Unknown")} for p in points if p.payload]
+            self.tool_texts = [p.payload.get("text", "") for p in points if p.payload]
             
             # Rebuild BM25
             tokenized_corpus = [text.lower().split() for text in self.tool_texts]

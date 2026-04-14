@@ -28,6 +28,7 @@ def main():
             continue
         
         results = searcher.search(query)
+        print(results)
         
         print(f"\n📋 Top {len(results)} Results:\n")
         for i, result in enumerate(results, 1):
