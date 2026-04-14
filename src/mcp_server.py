@@ -42,7 +42,8 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     
     # Initialize hybrid searcher
     searcher = HybridToolSearcher()
-    searcher.index(all_tools)
+    # No longer need to index here; indexing is persistent in Qdrant
+    searcher.is_indexed = True 
     
     logger.info("Server ready")
     
