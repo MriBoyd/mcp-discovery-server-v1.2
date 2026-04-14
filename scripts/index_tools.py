@@ -1,18 +1,20 @@
 
 import json
 import logging
+
+import os
 from src.hybrid_searcher import HybridToolSearcher
-from src.config import Config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def main():
     logger.info("Starting index maintenance script...")
-    
+    base = os.path.dirname(os.path.abspath(__file__))
+
     # 1. Load tools
     try:
-        with open("tools/all_tools.json", "r") as f:
+        with open(os.path.join(base, "./registry_dump.json"), "r") as f:
             data = json.load(f)
             tools = data if isinstance(data, list) else data.get('tools', [])
         logger.info(f"Loaded {len(tools)} tools from file.")

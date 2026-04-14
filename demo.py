@@ -3,16 +3,9 @@ import json
 from src.hybrid_searcher import HybridToolSearcher
 
 def main():
-    # Load your tools
-    with open('tools/all_tools.json', 'r') as f:
-        data = json.load(f)
-        tools = data if isinstance(data, list) else data.get('tools', [])
-    
     # Initialize searcher
     searcher = HybridToolSearcher()
     
-    # Index tools (first time only)
-    searcher.index(tools)
     
     # Interactive search
     print("\n🔍 Offline Hybrid Tool Search")

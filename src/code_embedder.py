@@ -1,4 +1,6 @@
 # src/code_embedder.py
+import os
+from pathlib import Path
 import torch
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
@@ -32,8 +34,18 @@ class CodeEmbedder:
     
     def __init__(self, model_path: str = "./embed-models", 
                  cache_dir: str = "."):
-        self.model_path = model_path
-        self.cache_dir = cache_dir
+        
+        current_file_dir = Path(__file__).parent.resolve()
+        project_root = current_file_dir.parent
+        abs_model_path = (project_root / model_path).resolve()
+        
+        self.model_path = str(abs_model_path)
+        
+        if not abs_model_path.exists():
+            logger.error(f"❌ Model path NOT found at: {abs_model_path}")
+            # List directory content to help you debug in logs
+            logger.info(f"Contents of {project_root}: {os.listdir(project_root)}")
+            raise FileNotFoundError(f"Could not find model at {abs_model_path}")
         
         logger.info(f"Loading CodeEmbedder from {model_path}...")
         

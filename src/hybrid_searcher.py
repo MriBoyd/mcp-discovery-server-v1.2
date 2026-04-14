@@ -9,9 +9,9 @@ import logging
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
-from src.code_embedder import CodeEmbedder
-from src.local_reranker import LocalReranker
-from src.config import Config
+from code_embedder import CodeEmbedder
+from local_reranker import LocalReranker
+from config import Config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -70,9 +70,14 @@ class HybridToolSearcher:
             
             
             
-            self.tools = [{"name": p.payload.get("name", "Unknown")} for p in points if p.payload]
+            # replace current line that sets self.tools
+            self.tools = [
+                p.payload.get("tool", {"name": p.payload.get("name", "Unknown"),
+                                    "description": p.payload.get("text", "")})
+                for p in points if p.payload
+            ]
             self.tool_texts = [p.payload.get("text", "") for p in points if p.payload]
-            
+
             # Rebuild BM25
             tokenized_corpus = [text.lower().split() for text in self.tool_texts]
             self.bm25 = BM25Okapi(tokenized_corpus)
@@ -124,11 +129,16 @@ class HybridToolSearcher:
         logger.info(f"Generating embeddings for {len(tools)} tools...")
         embeddings_list = self.embedder.batch_encode_tools(self.tool_texts)
         
+        # when building PointStruct points
         points = [
             PointStruct(
                 id=i,
                 vector=embeddings_list[i],
-                payload={"name": tools[i]['name'], "text": self.tool_texts[i]}
+                payload={
+                    "name": tools[i]['name'],
+                    "text": self.tool_texts[i],
+                    "tool": tools[i]   # << include full tool
+                }
             )
             for i in range(len(tools))
         ]

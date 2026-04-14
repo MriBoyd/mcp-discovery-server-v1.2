@@ -1,0 +1,59 @@
+[
+  {
+    "name": "create_github_issue",
+    "description": "Create a new issue in a GitHub repository",
+    "parameters": {
+      "repo": {
+        "type": "string",
+        "description": "Repository name"
+      },
+      "title": {
+        "type": "string",
+        "description": "Issue title"
+      },
+      "body": {
+        "type": "string",
+        "description": "Issue body"
+      }
+    },
+    "required": [
+      "repo",
+      "title"
+    ]
+  },
+  {
+    "name": "send_slack_message",
+    "description": "Send a message to a Slack channel",
+    "parameters": {
+      "channel": {
+        "type": "string",
+        "description": "Channel name"
+      },
+      "message": {
+        "type": "string",
+        "description": "Message text"
+      }
+    },
+    "required": [
+      "channel",
+      "message"
+    ]
+  },
+  {
+    "name": "search_files",
+    "description": "Search for files in a directory",
+    "parameters": {
+      "path": {
+        "type": "string",
+        "description": "Directory path"
+      },
+      "pattern": {
+        "type": "string",
+        "description": "Search pattern"
+      }
+    },
+    "required": [
+      "path"
+    ]
+  }
+]
