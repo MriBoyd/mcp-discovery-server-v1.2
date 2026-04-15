@@ -8,9 +8,6 @@ from typing import List, Union
 from src.config import Config
 import logging 
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 class CodeEmbedder:
     """
     Local wrapper for jina-code-embeddings-1.5b
@@ -42,12 +39,9 @@ class CodeEmbedder:
         self.model_path = str(abs_model_path)
         
         if not abs_model_path.exists():
-            logger.error(f"❌ Model path NOT found at: {abs_model_path}")
             # List directory content to help you debug in logs
-            logger.info(f"Contents of {project_root}: {os.listdir(project_root)}")
             raise FileNotFoundError(f"Could not find model at {abs_model_path}")
         
-        logger.info(f"Loading CodeEmbedder from {model_path}...")
         
         # Load model and tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -64,7 +58,6 @@ class CodeEmbedder:
         self.model.eval()
         self.model.to(Config.DEVICE)
         
-        logger.info(f"Model loaded on {Config.DEVICE}")
     
     def last_token_pool(self, last_hidden_states, attention_mask):
         """Last token pooling (Jina Code Embeddings uses this)"""

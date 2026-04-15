@@ -13,9 +13,6 @@ from code_embedder import CodeEmbedder
 from local_reranker import LocalReranker
 from config import Config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 class HybridToolSearcher:
     """
     Three-stage hybrid search:
@@ -41,7 +38,6 @@ class HybridToolSearcher:
         )
         
         # Initialize Qdrant Client
-        logger.info(f"Connecting to Qdrant at {Config.QDRANT_URL}...")
         self.qdrant = QdrantClient(url=Config.QDRANT_URL)
         self._ensure_collection()
         
@@ -51,7 +47,6 @@ class HybridToolSearcher:
         exists = any(c.name == Config.QDRANT_COLLECTION for c in collections)
         
         if not exists:
-            logger.info(f"Creating Qdrant collection: {Config.QDRANT_COLLECTION}")
             self.qdrant.create_collection(
                 collection_name=Config.QDRANT_COLLECTION,
                 vectors_config=VectorParams(
@@ -62,7 +57,6 @@ class HybridToolSearcher:
         else:
             # Load tools from existing collection to populate self.tools and self.tool_texts
             # This is a simple approach: scroll all points
-            logger.info("Loading tools from existing Qdrant collection...")
             points, _ = self.qdrant.scroll(collection_name=Config.QDRANT_COLLECTION, limit=1000)
             
             # Sort points by ID
@@ -121,12 +115,10 @@ class HybridToolSearcher:
         collection_info = self.qdrant.get_collection(Config.QDRANT_COLLECTION)
         points_count = collection_info.points_count or 0
         if points_count > 0 and not force_reindex:
-            logger.info(f"Qdrant collection already indexed with {collection_info.points_count} points.")
             self.is_indexed = True
             return
 
         # 3. Generate embeddings and upload to Qdrant
-        logger.info(f"Generating embeddings for {len(tools)} tools...")
         embeddings_list = self.embedder.batch_encode_tools(self.tool_texts)
         
         # when building PointStruct points
@@ -144,14 +136,12 @@ class HybridToolSearcher:
         ]
         
         # Batch upload to Qdrant
-        logger.info(f"Uploading {len(points)} points to Qdrant...")
         self.qdrant.upsert(
             collection_name=Config.QDRANT_COLLECTION,
             points=points
         )
         
         self.is_indexed = True
-        logger.info("Indexing complete.")
             
     def _bm25_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
         """BM25 lexical search with bounds checking"""
@@ -293,5 +283,4 @@ class HybridToolSearcher:
                 'relevance_score': rerank_item['relevance_score']
             })
         
-        logger.debug(f"Search completed in {time.time() - start_time:.3f}s")
         return final_results

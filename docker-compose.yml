@@ -13,14 +13,3 @@ services:
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__SERVICE__GRPC_PORT=6334
     restart: unless-stopped
-
-  # Optional: Qdrant Web UI for debugging
-  qdrant-web:
-    image: ghcr.io/qdrant/qdrant-web:latest
-    ports:
-      - "8080:80"
-    environment:
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-    depends_on:
-      - qdrant

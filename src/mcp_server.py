@@ -6,96 +6,54 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-
+import sys
+import contextlib
 from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.session import ServerSession
-from mcp.types import TextContent, CallToolResult
 from mcp.server.fastmcp.exceptions import ToolError
 from hybrid_searcher import HybridToolSearcher
+
+# Module-level singleton for the heavy searcher to avoid repeated weight loads
+_shared_searcher: Optional[HybridToolSearcher] = None
+
+
+def get_shared_searcher() -> HybridToolSearcher:
+    """Lazily initialize and return a single shared HybridToolSearcher instance."""
+    global _shared_searcher
+    if _shared_searcher is None:
+        with contextlib.redirect_stdout(sys.stderr):
+            _shared_searcher = HybridToolSearcher()
+            _shared_searcher.is_indexed = True
+    return _shared_searcher
 
 # Comment out if hybrid_searcher isn't ready yet
 # from hybrid_searcher import HybridToolSearcher
 # from config import Config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr  # CRITICAL: Force logs to stderr
+)
 # ============= Mock searcher for testing =============
 
 @dataclass
 class AppContext:
     """Type-safe application context with shared resources"""
     searcher: Any  # HybridToolSearcher or Mock
-    all_tools: List[Dict[str, Any]]
+    
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Manage application lifecycle."""
-    logger.info("Starting MCP Tool Search Server...")
-    
-    # Create tools data directory if it doesn't exist
-    tools_dir = Path("tools")
-    tools_dir.mkdir(exist_ok=True)
-    
-    # Load or create sample tools data
-    tools_file = tools_dir / "all_tools.json"
-    
-    if tools_file.exists():
-        with open(tools_file, "r") as f:
-            tools_data = json.load(f)
-            all_tools = tools_data if isinstance(tools_data, list) else tools_data.get("tools", [])
-    else:
-        # Create sample tools data for testing
-        all_tools = [
-            {
-                "name": "create_github_issue",
-                "description": "Create a new issue in a GitHub repository",
-                "parameters": {
-                    "repo": {"type": "string", "description": "Repository name"},
-                    "title": {"type": "string", "description": "Issue title"},
-                    "body": {"type": "string", "description": "Issue body"}
-                },
-                "required": ["repo", "title"]
-            },
-            {
-                "name": "send_slack_message",
-                "description": "Send a message to a Slack channel",
-                "parameters": {
-                    "channel": {"type": "string", "description": "Channel name"},
-                    "message": {"type": "string", "description": "Message text"}
-                },
-                "required": ["channel", "message"]
-            },
-            {
-                "name": "search_files",
-                "description": "Search for files in a directory",
-                "parameters": {
-                    "path": {"type": "string", "description": "Directory path"},
-                    "pattern": {"type": "string", "description": "Search pattern"}
-                },
-                "required": ["path"]
-            }
-        ]
-        # Save sample data
-        with open(tools_file, "w") as f:
-            json.dump(all_tools, f, indent=2)
-        logger.info(f"Created sample tools file with {len(all_tools)} tools")
-    
-    logger.info(f"Loaded {len(all_tools)} tools")
-    
-    # Initialize searcher (use mock for now)
-    searcher = HybridToolSearcher()
-    searcher.is_indexed = True
-        
-    
-    logger.info("Server ready")
-    
+      
+    # Use shared searcher singleton to prevent multiple heavy initializations
+    searcher = get_shared_searcher()
+
     yield AppContext(
         searcher=searcher,
-        all_tools=all_tools
     )
     
-    logger.info("Server shutdown complete")
 
 # ============= Create MCP Server =============
 
@@ -178,19 +136,16 @@ async def search_tools(
         return output
         
     except Exception as e:
-        logger.error(f"Search failed: {e}", exc_info=True)
         raise ToolError(f"Search failed: {str(e)}")
 
 # ============= Main Entry Points =============
 
 async def run_stdio():
     """Run the MCP server using stdio transport."""
-    logger.info("Starting MCP server in stdio mode...")
     await mcp_stdio.run_stdio_async()
 
 async def run_sse():
     """Run the MCP server using SSE transport."""
-    logger.info(f"Starting MCP server in SSE mode on http://0.0.0.0:8000")
     await mcp_sse.run_sse_async()
 
 if __name__ == "__main__":

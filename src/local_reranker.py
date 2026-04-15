@@ -3,11 +3,8 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 from typing import List, Dict, Any, Optional
-import logging
 from config import Config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 class LocalReranker:
     """
@@ -19,9 +16,7 @@ class LocalReranker:
                  cache_dir: str = "."):
         self.model_path = model_path
         self.cache_dir = cache_dir
-        
-        logger.info(f"Loading Reranker from {model_path}...")
-        
+                
         # Load model and tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
@@ -44,9 +39,7 @@ class LocalReranker:
         
         # Inject tokenizer into model to avoid redundant loading in its internal methods
         self.model._tokenizer = self.tokenizer
-        
-        logger.info(f"Reranker loaded on {Config.DEVICE}")
-    
+            
     def rerank(self, query: str, documents: List[str], top_n: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Rerank documents based on relevance to query using the model's built-in rerank logic.

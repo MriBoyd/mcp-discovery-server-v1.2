@@ -1,0 +1,39 @@
+# Configuration for downstream MCP servers to proxy
+mcpServers:
+  # Example 1: Filesystem server
+  filesystem:
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "/tmp"  # Restrict to /tmp for safety
+    
+  # Example 2: Memory server
+  memory:
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-memory"
+  
+  # Example 3: Python-based weather server
+  weather:
+    command: python
+    args:
+      - "-m"
+      - "mcp_server_weather"
+  
+  # Example 4: Git server
+  git:
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-git"
+      - "/path/to/repo"
+
+# Proxy configuration
+proxy:
+  mode: flat  # Options: flat, prefixed, namespaced
+  tool_prefix_separator: "__"  # Used in flat mode: "server__tool"
+  include_servers: []  # Empty = all servers
+  exclude_servers: []  # Servers to skip
+  tool_filters: {}  # Per-server tool filtering
