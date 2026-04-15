@@ -251,9 +251,14 @@ class HybridToolSearcher:
         # Stage 1: BM25 lexical search
         bm25_results = self._bm25_search(query)
         
+        print(f"BM25 found {len(bm25_results)} candidates in {time.time() - start_time:.2f}s")
+        
         # Stage 2: Dense semantic search (Qdrant)
         dense_results = self._dense_search(query)
         
+        print(f"Dense found {len(dense_results)} candidates in {time.time() - start_time:.2f}s")
+        
+
         # Stage 3: Score fusion
         fused_results = self._fuse_scores(bm25_results, dense_results)
         

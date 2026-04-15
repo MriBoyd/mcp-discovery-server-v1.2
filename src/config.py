@@ -15,10 +15,10 @@ class Config:
     RERANKER_MODEL = "./re-rank"  # or GGUF version
     
     # Search settings
-    BM25_CANDIDATES = 10      # Initial BM25 retrieval
-    DENSE_CANDIDATES = 10     # Initial dense retrieval
+    BM25_CANDIDATES = 20      # Initial BM25 retrieval
+    DENSE_CANDIDATES = 20     # Initial dense retrieval
     FUSION_CANDIDATES = 10     # Candidates after fusion
-    FINAL_RESULTS = 3          # Top results after reranking
+    FINAL_RESULTS = 1          # Top results after reranking
     
     # Fusion weights (BM25 : Dense)
     BM25_WEIGHT = 0.3
