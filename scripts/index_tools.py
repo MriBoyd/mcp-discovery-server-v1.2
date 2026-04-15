@@ -14,7 +14,7 @@ def main():
 
     # 1. Load tools
     try:
-        with open(os.path.join(base, "./registry_dump.json"), "r") as f:
+        with open(os.path.join(base, "../registry_dump.json"), "r") as f:
             data = json.load(f)
             tools = data if isinstance(data, list) else data.get('tools', [])
         logger.info(f"Loaded {len(tools)} tools from file.")

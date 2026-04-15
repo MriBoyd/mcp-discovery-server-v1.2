@@ -1,0 +1,65 @@
+{
+	"servers": [
+		{
+			"name": "demo_server",
+			"transport": "sse",
+			"url": "http://localhost:8000/sse",
+			"tools": [
+				{
+					"name": "Demo--Everything-__echo",
+					"description": "Echoes back the input string",
+					"parameters": {
+						"message": {
+							"type": "string",
+							"description": "Message to echo",
+							"required": true
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "filesystem_server",
+			"transport": "stdio",
+			"command": "npx",
+			"args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+			"tools": [
+				{
+					"name": "read_file",
+					"description": "Read contents of a file",
+					"parameters": {
+						"path": {
+							"type": "string",
+							"description": "Path to the file",
+							"required": true
+						}
+					}
+				},
+				{
+					"name": "write_file",
+					"description": "Write content to a file",
+					"parameters": {
+						"path": { "type": "string", "required": true },
+						"content": { "type": "string", "required": true }
+					}
+				}
+			]
+		},
+		{
+			"name": "github_server",
+			"transport": "sse",
+			"url": "http://localhost:8001/sse",
+			"tools": [
+				{
+					"name": "create_issue",
+					"description": "Create a GitHub issue",
+					"parameters": {
+						"repo": { "type": "string", "required": true },
+						"title": { "type": "string", "required": true },
+						"body": { "type": "string", "required": false }
+					}
+				}
+			]
+		}
+	]
+}

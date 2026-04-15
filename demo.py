@@ -22,6 +22,8 @@ def main():
         
         results = searcher.search(query)
         
+        print(results)
+        
         print(f"\n📋 Top {len(results)} Results:\n")
         for i, result in enumerate(results, 1):
             print(f"{i}. {result['tool_name']}")

@@ -9,9 +9,9 @@ import logging
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
-from code_embedder import CodeEmbedder
-from local_reranker import LocalReranker
-from config import Config
+from src.code_embedder import CodeEmbedder
+from src.local_reranker import LocalReranker
+from src.config import Config
 
 class HybridToolSearcher:
     """

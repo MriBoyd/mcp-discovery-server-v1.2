@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 from typing import List, Dict, Any, Optional
-from config import Config
+from src.config import Config
 
 
 class LocalReranker:
