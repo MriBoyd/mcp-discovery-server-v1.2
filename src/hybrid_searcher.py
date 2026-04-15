@@ -27,6 +27,11 @@ class HybridToolSearcher:
         self.tool_texts = []
         self.is_indexed = False
         
+        # Initialize regex for tokenization
+        import re
+        self.token_pattern = re.compile(r'[^a-zA-Z0-9]')
+        self.camel_pattern = re.compile(r'([a-z])([A-Z])')
+        
         # Initialize embedder and reranker
         self.embedder = CodeEmbedder(
             model_path=Config.CODE_EMBEDDING_MODEL,
@@ -41,6 +46,16 @@ class HybridToolSearcher:
         self.qdrant = QdrantClient(url=Config.QDRANT_URL)
         self._ensure_collection()
         
+    def _tokenize(self, text: str) -> List[str]:
+        """Robust tokenization for lexical search"""
+        if not text:
+            return []
+        # Handle camelCase
+        text = self.camel_pattern.sub(r'\1 \2', text)
+        # Split on non-alphanumeric characters
+        tokens = self.token_pattern.split(text)
+        return [t.lower() for t in tokens if t]
+
     def _ensure_collection(self):
         """Ensure Qdrant collection exists and load tool data if needed"""
         collections = self.qdrant.get_collections().collections
@@ -62,8 +77,6 @@ class HybridToolSearcher:
             # Sort points by ID
             points.sort(key=lambda p: p.id)
             
-            
-            
             # replace current line that sets self.tools
             self.tools = [
                 p.payload.get("tool", {"name": p.payload.get("name", "Unknown"),
@@ -73,7 +86,7 @@ class HybridToolSearcher:
             self.tool_texts = [p.payload.get("text", "") for p in points if p.payload]
 
             # Rebuild BM25
-            tokenized_corpus = [text.lower().split() for text in self.tool_texts]
+            tokenized_corpus = [self._tokenize(text) for text in self.tool_texts]
             self.bm25 = BM25Okapi(tokenized_corpus)
             self.is_indexed = True
     
@@ -108,7 +121,7 @@ class HybridToolSearcher:
         self.tool_texts = [self._prepare_tool_text(tool) for tool in tools]
         
         # 1. Build BM25 index (lexical)
-        tokenized_corpus = [text.lower().split() for text in self.tool_texts]
+        tokenized_corpus = [self._tokenize(text) for text in self.tool_texts]
         self.bm25 = BM25Okapi(tokenized_corpus)
         
         # 2. Check if Qdrant already has data
@@ -151,7 +164,7 @@ class HybridToolSearcher:
         if top_k is None:
             top_k = Config.BM25_CANDIDATES
         
-        tokenized_query = query.lower().split()
+        tokenized_query = self._tokenize(query)
         scores = self.bm25.get_scores(tokenized_query)
         
         num_scores = len(scores)
