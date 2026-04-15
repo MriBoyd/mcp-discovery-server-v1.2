@@ -137,25 +137,53 @@ class MCPToolRegistry:
             logging.error(f"Failed to connect to {server_name}: {e}")
             raise ToolError(f"Cannot connect to MCP server '{server_name}': {str(e)}")
     
+    def _format_result(self, result: Any) -> str:
+        """Helper to extract text from an MCP CallToolResult object."""
+        try:
+            if hasattr(result, 'content'):
+                # Extract text from all content blocks that have it
+                texts = [c.text for c in result.content if hasattr(c, 'text')]
+                return "\n".join(texts) if texts else str(result)
+            return str(result)
+        except Exception:
+            return str(result)
+    
     async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Execute a tool on its server"""
         server_name = self.get_server_for_tool(tool_name)
         if not server_name:
             raise ToolError(f"Tool '{tool_name}' not found in any configured MCP server")
         
-        # Connect to the server
-        client = await self.connect_to_server(server_name)
+        config = self.servers[server_name]["config"]
+        transport = config["transport"]
         
-        # Execute the tool
         try:
-            result = await client.call_tool(tool_name, arguments=arguments)
-            # Format result
-            if hasattr(result, 'content'):
-                texts = [c.text for c in result.content if hasattr(c, 'text')]
-                return "\n".join(texts) if texts else str(result)
-            return str(result)
+            if transport == "stdio":
+                server_params = StdioServerParameters(
+                    command=config["command"],
+                    args=config.get("args", []),
+                    env=config.get("env")
+                )
+                # Using 'async with' here ensures the Cancel Scope is cleaned up 
+                # within this specific task, fixing the RuntimeError.
+                async with stdio_client(server_params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool(tool_name, arguments=arguments)
+                        return self._format_result(result)
+
+            elif transport == "sse":
+                async with sse_client(config["url"]) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool(tool_name, arguments=arguments)
+                        return self._format_result(result)
+            
+            else:
+                raise ValueError(f"Unknown transport: {transport}")
+                
         except Exception as e:
-            raise ToolError(f"Failed to execute '{tool_name}' on '{server_name}': {str(e)}")
+            logging.error(f"Error executing {tool_name}: {traceback.format_exc()}")
+            raise ToolError(f"Failed to execute '{tool_name}': {str(e)}")
     
     async def cleanup(self):
         """Close all server connections"""
