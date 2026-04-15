@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import argparse
+import shlex
 
 # MCP imports
 from mcp import ClientSession, StdioServerParameters
@@ -323,6 +324,26 @@ Examples:
                 env_vars[key] = value
             else:
                 logger.warning(f"Ignoring malformed env var: {env}")
+
+    # Sanitize CLI-provided --args: argparse may produce a single
+    # quoted string containing many tokens. Split those entries so the
+    # child process receives proper argv tokens (e.g., `uv run ...`).
+    raw_args = args.args or []
+    sanitized_args: List[str] = []
+    for a in raw_args:
+        if not isinstance(a, str):
+            continue
+        a = a.strip()
+        if not a:
+            continue
+        if " " in a:
+            try:
+                parts = shlex.split(a)
+                sanitized_args.extend(parts)
+            except Exception:
+                sanitized_args.append(a)
+        else:
+            sanitized_args.append(a)
     
     servers_config = []
     
@@ -344,7 +365,7 @@ Examples:
             result = await extractor.extract_stdio_server(
                 name=args.name,
                 command=args.command,
-                args=args.args or [],
+                args=sanitized_args,
                 env=env_vars if env_vars else None
             )
         elif args.transport == "sse":

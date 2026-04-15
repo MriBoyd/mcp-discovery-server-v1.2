@@ -1,65 +1,388 @@
 {
-	"servers": [
-		{
-			"name": "demo_server",
-			"transport": "sse",
-			"url": "http://localhost:8000/sse",
-			"tools": [
-				{
-					"name": "Demo--Everything-__echo",
-					"description": "Echoes back the input string",
-					"parameters": {
-						"message": {
-							"type": "string",
-							"description": "Message to echo",
-							"required": true
-						}
-					}
-				}
-			]
-		},
-		{
-			"name": "filesystem_server",
-			"transport": "stdio",
-			"command": "npx",
-			"args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-			"tools": [
-				{
-					"name": "read_file",
-					"description": "Read contents of a file",
-					"parameters": {
-						"path": {
-							"type": "string",
-							"description": "Path to the file",
-							"required": true
-						}
-					}
-				},
-				{
-					"name": "write_file",
-					"description": "Write content to a file",
-					"parameters": {
-						"path": { "type": "string", "required": true },
-						"content": { "type": "string", "required": true }
-					}
-				}
-			]
-		},
-		{
-			"name": "github_server",
-			"transport": "sse",
-			"url": "http://localhost:8001/sse",
-			"tools": [
-				{
-					"name": "create_issue",
-					"description": "Create a GitHub issue",
-					"parameters": {
-						"repo": { "type": "string", "required": true },
-						"title": { "type": "string", "required": true },
-						"body": { "type": "string", "required": false }
-					}
-				}
-			]
-		}
-	]
+  "servers": [
+    {
+      "name": "gmail-mcp",
+      "transport": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/src/gmail",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/src/gmail/server.py",
+        "--creds-file-path",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/credentials.json",
+        "--token-path",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/token.json"
+      ],
+      "tools": [
+        {
+          "name": "send-email",
+          "description": "Sends email to recipient. \n                Do not use if user only asked to draft email. \n                Drafts must be approved before sending.",
+          "parameters": {
+            "recipient_id": {
+              "type": "string",
+              "description": "Recipient email address",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "description": "Email subject",
+              "required": true
+            },
+            "message": {
+              "type": "string",
+              "description": "Email content text",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "trash-email",
+          "description": "Moves email to trash. \n                Confirm before moving email to trash.",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "get-unread-emails",
+          "description": "Retrieve unread emails",
+          "parameters": {}
+        },
+        {
+          "name": "read-email",
+          "description": "Retrieves given email content",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "mark-email-as-read",
+          "description": "Marks given email as read",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "open-email",
+          "description": "Open email in browser",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "create-draft",
+          "description": "Creates a draft email without sending it",
+          "parameters": {
+            "recipient_id": {
+              "type": "string",
+              "description": "Recipient email address",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "description": "Email subject",
+              "required": true
+            },
+            "message": {
+              "type": "string",
+              "description": "Email content text",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "list-drafts",
+          "description": "Lists all draft emails",
+          "parameters": {}
+        },
+        {
+          "name": "list-labels",
+          "description": "Lists all labels in the user's mailbox",
+          "parameters": {}
+        },
+        {
+          "name": "create-label",
+          "description": "Creates a new label",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "Label name",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "apply-label",
+          "description": "Applies a label to an email",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            },
+            "label_id": {
+              "type": "string",
+              "description": "Label ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "remove-label",
+          "description": "Removes a label from an email",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            },
+            "label_id": {
+              "type": "string",
+              "description": "Label ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "rename-label",
+          "description": "Renames an existing label",
+          "parameters": {
+            "label_id": {
+              "type": "string",
+              "description": "Label ID to rename",
+              "required": true
+            },
+            "new_name": {
+              "type": "string",
+              "description": "New name for the label",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "delete-label",
+          "description": "Permanently deletes a label",
+          "parameters": {
+            "label_id": {
+              "type": "string",
+              "description": "Label ID to delete",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "search-by-label",
+          "description": "Searches for emails with a specific label",
+          "parameters": {
+            "label_id": {
+              "type": "string",
+              "description": "Label ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "list-filters",
+          "description": "Lists all email filters in the user's mailbox",
+          "parameters": {}
+        },
+        {
+          "name": "get-filter",
+          "description": "Gets details of a specific filter",
+          "parameters": {
+            "filter_id": {
+              "type": "string",
+              "description": "Filter ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "create-filter",
+          "description": "Creates a new email filter",
+          "parameters": {
+            "from_email": {
+              "type": "string",
+              "description": "Filter emails from this sender",
+              "required": false
+            },
+            "to_email": {
+              "type": "string",
+              "description": "Filter emails to this recipient",
+              "required": false
+            },
+            "subject": {
+              "type": "string",
+              "description": "Filter emails with this subject",
+              "required": false
+            },
+            "query": {
+              "type": "string",
+              "description": "Filter emails matching this query",
+              "required": false
+            },
+            "has_attachment": {
+              "type": "boolean",
+              "description": "Filter emails with attachments",
+              "required": false
+            },
+            "exclude_chats": {
+              "type": "boolean",
+              "description": "Exclude chats from filter",
+              "required": false
+            },
+            "size_comparison": {
+              "type": "string",
+              "description": "Size comparison ('larger' or 'smaller')",
+              "required": false
+            },
+            "size": {
+              "type": "integer",
+              "description": "Size in bytes for comparison",
+              "required": false
+            },
+            "add_label_ids": {
+              "type": "array",
+              "description": "Labels to add to matching emails",
+              "required": false
+            },
+            "remove_label_ids": {
+              "type": "array",
+              "description": "Labels to remove from matching emails",
+              "required": false
+            },
+            "forward_to": {
+              "type": "string",
+              "description": "Email address to forward matching emails to",
+              "required": false
+            }
+          }
+        },
+        {
+          "name": "delete-filter",
+          "description": "Deletes a specific filter",
+          "parameters": {
+            "filter_id": {
+              "type": "string",
+              "description": "Filter ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "search-emails",
+          "description": "Searches for emails using Gmail's search syntax",
+          "parameters": {
+            "query": {
+              "type": "string",
+              "description": "Gmail search query",
+              "required": true
+            },
+            "max_results": {
+              "type": "integer",
+              "description": "Maximum number of results to return",
+              "required": false
+            }
+          }
+        },
+        {
+          "name": "create-folder",
+          "description": "Creates a new folder",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "Folder name",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "move-to-folder",
+          "description": "Moves an email to a folder",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            },
+            "folder_id": {
+              "type": "string",
+              "description": "Folder ID",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "list-folders",
+          "description": "Lists all user-created folders",
+          "parameters": {}
+        },
+        {
+          "name": "archive-email",
+          "description": "Archives an email (removes from inbox without deleting)",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID to archive",
+              "required": true
+            }
+          }
+        },
+        {
+          "name": "batch-archive",
+          "description": "Archives multiple emails matching a search query",
+          "parameters": {
+            "query": {
+              "type": "string",
+              "description": "Gmail search query to find emails to archive",
+              "required": true
+            },
+            "max_emails": {
+              "type": "integer",
+              "description": "Maximum number of emails to archive (default: 100)",
+              "required": false
+            }
+          }
+        },
+        {
+          "name": "list-archived",
+          "description": "Lists archived emails (not in inbox)",
+          "parameters": {
+            "max_results": {
+              "type": "integer",
+              "description": "Maximum number of results to return",
+              "required": false
+            }
+          }
+        },
+        {
+          "name": "restore-to-inbox",
+          "description": "Restores an archived email back to the inbox",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID to restore to inbox",
+              "required": true
+            }
+          }
+        }
+      ]
+    }
+  ]
 }
