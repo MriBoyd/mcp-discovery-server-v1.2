@@ -3,6 +3,7 @@ import asyncio
 import logging
 import json
 from pathlib import Path
+from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator, Dict, Optional
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -12,6 +13,9 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.session import ServerSession
 from mcp.server.fastmcp.exceptions import ToolError
 from hybrid_searcher import HybridToolSearcher
+import traceback
+import warnings
+import types
 
 # MCP Client imports
 from mcp import ClientSession, StdioServerParameters
@@ -42,6 +46,7 @@ class MCPToolRegistry:
     
     def __init__(self, config_path: Path):
         self.servers: Dict[str, Dict] = {}  # server_name -> {config, client, tools}
+        self.exit_stack = AsyncExitStack()
         self._load_config(config_path)
     
     def _load_config(self, config_path: Path):
@@ -103,15 +108,24 @@ class MCPToolRegistry:
                     args=config.get("args", []),
                     env=config.get("env")
                 )
-                read_stream, write_stream = await stdio_client(server_params)
-                client = ClientSession(read_stream, write_stream)
+                # Enter the stdio client context manually and keep it open
+                stdio_cm = stdio_client(server_params)
+                read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_client(server_params))
+
+                client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
+                # Enter the ClientSession context to start background tasks
                 await client.initialize()
+                # Store the transport context manager so we can close it later
+                server_info["_transport_cm"] = stdio_cm
                 
             elif transport == "sse":
                 url = config["url"]
-                read_stream, write_stream = await sse_client(url)
-                client = ClientSession(read_stream, write_stream)
+                sse_cm = sse_client(url)
+                read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url))
+
+                client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
                 await client.initialize()
+                server_info["_transport_cm"] = sse_cm
                 
             else:
                 raise ValueError(f"Unknown transport: {transport}")
@@ -145,12 +159,7 @@ class MCPToolRegistry:
     
     async def cleanup(self):
         """Close all server connections"""
-        for server_info in self.servers.values():
-            if server_info["client"]:
-                try:
-                    await server_info["client"].__aexit__(None, None, None)
-                except:
-                    pass
+        await self.exit_stack.aclose()
 
 
 @dataclass
@@ -313,8 +322,34 @@ async def run_sse():
 
 if __name__ == "__main__":
     import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == "--sse":
-        asyncio.run(run_sse())
-    else:
-        asyncio.run(run_stdio())
+    # Show ResourceWarnings with tracebacks to help diagnose unclosed streams
+    warnings.simplefilter("default", ResourceWarning)
+
+    def _log_exception_group(exc: BaseException):
+        """Log ExceptionGroup/BaseExceptionGroup inner exceptions with tracebacks."""
+        logging.error("Top-level exception: %s", exc)
+        inner = getattr(exc, 'exceptions', None)
+        if inner and isinstance(inner, (list, tuple)):
+            for i, sub in enumerate(inner, start=1):
+                try:
+                    if isinstance(sub, BaseException):
+                        logging.error("--- Sub-exception %d: %s", i, sub)
+                        tb = ''.join(traceback.format_exception(type(sub), sub, sub.__traceback__))
+                        logging.error(tb)
+                    else:
+                        logging.error("--- Sub-exception %d (non-exception): %r", i, sub)
+                except Exception:
+                    logging.exception("Failed to log sub-exception %d", i)
+
+    try:
+        if len(sys.argv) > 1 and sys.argv[1] == "--sse":
+            asyncio.run(run_sse())
+        else:
+            asyncio.run(run_stdio())
+    except BaseException as e:
+        # anyio/asyncio may raise ExceptionGroup/BaseExceptionGroup. Log details.
+        if hasattr(e, 'exceptions'):
+            _log_exception_group(e)
+        else:
+            logging.exception("Unhandled exception in main: %s", e)
+        raise
