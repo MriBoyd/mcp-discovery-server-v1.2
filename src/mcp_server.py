@@ -231,11 +231,11 @@ mcp_sse = FastMCP(
 
 @mcp_stdio.tool(
     name="search_tools",
-    description="Search for relevant MCP tools based on a natural language query. Returns tool names, descriptions, and parameter schemas."
+    description="Search for relevant MCP tools based on a short key descriptive words. Returns tool names, descriptions, and parameter schemas."
 )
 @mcp_sse.tool(
     name="search_tools",
-    description="Search for relevant MCP tools based on a natural language query. Returns tool names, descriptions, and parameter schemas."
+    description="Search for relevant MCP tools based on a short key descriptive words. Returns tool names, descriptions, and parameter schemas."
 )
 async def search_tools(
     query: str,
