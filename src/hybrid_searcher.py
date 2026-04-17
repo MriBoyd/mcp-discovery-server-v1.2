@@ -215,11 +215,37 @@ class HybridToolSearcher:
     
     def _fuse_scores(self, bm25_results: List[Tuple[float, int]], 
                      dense_results: List[Tuple[float, int]],
-                     normalization: str = "minmax"
+                     method: Optional[str] = None
                      ) -> List[Tuple[float, int]]:
         """
-        Fuse BM25 and dense scores using weighted sum
+        Fuse BM25 and dense scores using configured method
         """
+        if method is None:
+            method = Config.FUSION_METHOD
+            
+        if method == "rrf":
+            return self._rrf_fuse(bm25_results, dense_results)
+        else:
+            return self._weighted_fuse(bm25_results, dense_results)
+
+    def _rrf_fuse(self, bm25_results: List[Tuple[float, int]], 
+                  dense_results: List[Tuple[float, int]]) -> List[Tuple[float, int]]:
+        """Reciprocal Rank Fusion"""
+        k = getattr(Config, 'RRF_K', 60)
+        scores = {}
+        
+        for rank, (_, idx) in enumerate(bm25_results):
+            scores[idx] = scores.get(idx, 0) + 1.0 / (k + rank)
+            
+        for rank, (_, idx) in enumerate(dense_results):
+            scores[idx] = scores.get(idx, 0) + 1.0 / (k + rank)
+            
+        fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return [(score, idx) for idx, score in fused][:Config.FUSION_CANDIDATES]
+
+    def _weighted_fuse(self, bm25_results: List[Tuple[float, int]], 
+                      dense_results: List[Tuple[float, int]]) -> List[Tuple[float, int]]:
+        """Weighted sum of normalized scores"""
         all_indices = set()
         for _, idx in bm25_results:
             all_indices.add(idx)
@@ -259,17 +285,19 @@ class HybridToolSearcher:
         if top_k is None:
             top_k = Config.FINAL_RESULTS
         
+        from concurrent.futures import ThreadPoolExecutor
+        
         start_time = time.time()
         
-        # Stage 1: BM25 lexical search
-        bm25_results = self._bm25_search(query)
+        # Stage 1 & 2: Parallel BM25 and Dense search
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            bm25_future = executor.submit(self._bm25_search, query)
+            dense_future = executor.submit(self._dense_search, query)
+            
+            bm25_results = bm25_future.result()
+            dense_results = dense_future.result()
         
-        print(f"BM25 found {len(bm25_results)} candidates in {time.time() - start_time:.2f}s")
-        
-        # Stage 2: Dense semantic search (Qdrant)
-        dense_results = self._dense_search(query)
-        
-        print(f"Dense found {len(dense_results)} candidates in {time.time() - start_time:.2f}s")
+        print(f"Hybrid retrieval found {len(bm25_results)} lexical and {len(dense_results)} dense candidates in {time.time() - start_time:.2f}s")
         
 
         # Stage 3: Score fusion

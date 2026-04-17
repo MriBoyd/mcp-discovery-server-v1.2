@@ -8,6 +8,8 @@ from typing import List, Union
 from src.config import Config
 import logging 
 
+from functools import lru_cache
+
 class CodeEmbedder:
     """
     Local wrapper for jina-code-embeddings-1.5b
@@ -52,7 +54,7 @@ class CodeEmbedder:
         self.model = AutoModel.from_pretrained(
             model_path,
             cache_dir=cache_dir,
-            dtype=torch.bfloat16,
+            dtype=torch.bfloat16 if Config.DEVICE == "cuda" else torch.float32,
             local_files_only=True
         )
         self.model.eval()
@@ -98,7 +100,7 @@ class CodeEmbedder:
         batch_dict = {k: v.to(self.model.device) for k, v in batch_dict.items()}
         
         # Encode
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self.model(**batch_dict)
             embeddings = self.last_token_pool(
                 outputs.last_hidden_state, 
@@ -110,12 +112,9 @@ class CodeEmbedder:
         
         return embeddings.cpu().to(torch.float32).numpy().tolist()
     
-    def encode_tool(self, tool_text: str) -> List[float]:
-        """Encode a tool for indexing (as passage)"""
-        return self.encode(tool_text, task="nl2code", is_query=False)[0]
-    
+    @lru_cache(maxsize=128)
     def encode_query(self, query: str) -> List[float]:
-        """Encode a user query for searching"""
+        """Encode a user query for searching (cached)"""
         return self.encode(query, task="nl2code", is_query=True)[0]
     
     def batch_encode_tools(self, tool_texts: List[str], batch_size: int = 32) -> List[List[float]]:

@@ -43,31 +43,30 @@ class LocalReranker:
     def rerank(self, query: str, documents: List[str], top_n: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Rerank documents based on relevance to query using the model's built-in rerank logic.
-        
+
         Args:
             query: Search query
             documents: List of document texts to rerank
             top_n: Number of top results to return
-        
+
         Returns:
             List of dicts with 'index', 'relevance_score', 'document'
         """
         if top_n is None:
             top_n = Config.FINAL_RESULTS
-        
+
         if not documents:
             return []
-            
-        # Use the model's native rerank method which handles the specific prompt format
-        # and cosine similarity logic for Jina Reranker v3.
-        results = self.model.rerank(
-            query=query,
-            documents=documents,
-            top_n=top_n
-        )
-        
+
+        # Use the model's native rerank method with inference_mode
+        with torch.inference_mode():
+            results = self.model.rerank(
+                query=query,
+                documents=documents,
+                top_n=top_n
+            )
+
         # Ensure the results match the expected format: {'index', 'relevance_score', 'document'}
-        # JinaForRanking.rerank returns {'index', 'relevance_score', 'document', 'embedding'}
         return [
             {
                 'index': item['index'],

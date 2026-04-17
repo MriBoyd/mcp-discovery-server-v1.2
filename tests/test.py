@@ -32,18 +32,21 @@ async def main():
         async def assistant(query: str):
             return [llm.messages.system("You are a helpful assistant. My email is mriboyd1240@gmail.com, always search for tools related to user queries if you do not have them available. and use them respond to call call_tool"), llm.messages.user(query)]
     
+        input_query = input("> ")
+        response = await assistant(input_query)
         
-        response = await assistant("send random email to me")
-        
-        while response.tool_calls:
-            tool_outputs = await response.execute_tools()
-            response = await response.resume(tool_outputs)
+        while input_query.lower() != "exit":
             
-            print("Tool calls executed, resuming assistant...")
-            print("Current response:", response.text)
-            print("Tool calls:", response.tool_calls)
+            while response.tool_calls:
+                tool_outputs = await response.execute_tools()
+                response = await response.resume(tool_outputs)
+           
+            print(response.pretty())
+            
+            input_query = input("> ")
+            response = await response.resume(input_query)
+                
         
-        print(response.pretty())
 
 
 asyncio.run(main())
