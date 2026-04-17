@@ -34,6 +34,13 @@ class CodeEmbedder:
     def __init__(self, model_path: str = "./embed-models", 
                  cache_dir: str = "."):
         
+        # Optimization: Set threads for CPU inference if not already set by reranker
+        if Config.DEVICE == "cpu":
+            import os
+            # Use a reasonable number of threads
+            num_threads = min(os.cpu_count() or 4, 8)
+            torch.set_num_threads(num_threads)
+
         current_file_dir = Path(__file__).parent.resolve()
         project_root = current_file_dir.parent
         abs_model_path = (project_root / model_path).resolve()
@@ -59,6 +66,17 @@ class CodeEmbedder:
         )
         self.model.eval()
         self.model.to(Config.DEVICE)
+        
+        # CPU Optimization: Dynamic Quantization
+        if Config.DEVICE == "cpu":
+            try:
+                # Quantize Linear layers to int8 for speedup on CPU
+                self.model = torch.quantization.quantize_dynamic(
+                    self.model, {torch.nn.Linear}, dtype=torch.qint8
+                )
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to quantize embedder: {e}")
         
     
     def last_token_pool(self, last_hidden_states, attention_mask):

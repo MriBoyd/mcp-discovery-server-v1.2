@@ -17,6 +17,13 @@ class LocalReranker:
         self.model_path = model_path
         self.cache_dir = cache_dir
                 
+        # Optimization: Set threads for CPU inference
+        if Config.DEVICE == "cpu":
+            import os
+            # Use a reasonable number of threads, not all to avoid contention
+            num_threads = min(os.cpu_count() or 4, 8)
+            torch.set_num_threads(num_threads)
+
         # Load model and tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path,
@@ -37,6 +44,17 @@ class LocalReranker:
         self.model.eval()
         self.model.to(Config.DEVICE)
         
+        # CPU Optimization: Dynamic Quantization
+        if Config.DEVICE == "cpu":
+            try:
+                # Quantize Linear layers to int8 for 2-4x speedup on CPU
+                self.model = torch.quantization.quantize_dynamic(
+                    self.model, {torch.nn.Linear}, dtype=torch.qint8
+                )
+            except Exception as e:
+                import logging
+                logging.warning(f"Failed to quantize reranker: {e}")
+
         # Inject tokenizer into model to avoid redundant loading in its internal methods
         self.model._tokenizer = self.tokenizer
             

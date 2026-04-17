@@ -17,7 +17,7 @@ class Config:
     # Search settings
     BM25_CANDIDATES = 20      # Initial BM25 retrieval
     DENSE_CANDIDATES = 20     # Initial dense retrieval
-    FUSION_CANDIDATES = 7      # Candidates after fusion (reduced from 10)
+    FUSION_CANDIDATES = 4      # Candidates after fusion (reduced from 7 for speed)
     FINAL_RESULTS = 1          # Top results after reranking
     
     # Fusion weights (BM25 : Dense)

@@ -26,6 +26,8 @@ class HybridToolSearcher:
         self.tools = []
         self.tool_texts = []
         self.is_indexed = False
+        self._search_cache = {}
+        self._max_cache_size = 100
         
         # Initialize regex for tokenization
         import re
@@ -71,24 +73,38 @@ class HybridToolSearcher:
             )
         else:
             # Load tools from existing collection to populate self.tools and self.tool_texts
-            # This is a simple approach: scroll all points
-            points, _ = self.qdrant.scroll(collection_name=Config.QDRANT_COLLECTION, limit=1000)
+            # Use scrolling to retrieve all points
+            all_points = []
+            next_page_offset = None
             
-            # Sort points by ID
-            points.sort(key=lambda p: p.id)
+            while True:
+                points, next_page_offset = self.qdrant.scroll(
+                    collection_name=Config.QDRANT_COLLECTION,
+                    limit=1000,
+                    offset=next_page_offset,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                all_points.extend(points)
+                if next_page_offset is None:
+                    break
             
-            # replace current line that sets self.tools
+            # Sort points by ID if they were indexed sequentially
+            all_points.sort(key=lambda p: p.id if isinstance(p.id, int) else 0)
+            
             self.tools = [
                 p.payload.get("tool", {"name": p.payload.get("name", "Unknown"),
                                     "description": p.payload.get("text", "")})
-                for p in points if p.payload
+                for p in all_points if p.payload
             ]
-            self.tool_texts = [p.payload.get("text", "") for p in points if p.payload]
+            self.tool_texts = [p.payload.get("text", "") for p in all_points if p.payload]
 
-            # Rebuild BM25
-            tokenized_corpus = [self._tokenize(text) for text in self.tool_texts]
-            self.bm25 = BM25Okapi(tokenized_corpus)
-            self.is_indexed = True
+            if self.tool_texts:
+                # Rebuild BM25
+                tokenized_corpus = [self._tokenize(text) for text in self.tool_texts]
+                self.bm25 = BM25Okapi(tokenized_corpus)
+                self.is_indexed = True
+                self._search_cache = {} # Clear cache on reload
     
     def _prepare_tool_text(self, tool: Dict[str, Any]) -> str:
         """
@@ -98,12 +114,25 @@ class HybridToolSearcher:
         name = tool.get('name', 'unknown')
         desc = tool.get('description', '')
         
+        # Limit description length for retrieval quality/speed balance
+        if len(desc) > 1000:
+            desc = desc[:997] + "..."
+            
         # Build parameter signature: param:type
         params = tool.get('parameters', {})
+        if not params and 'inputSchema' in tool:
+            params = tool['inputSchema'].get('properties', {})
+            
         required = tool.get('required', [])
+        if not required and 'inputSchema' in tool:
+            required = tool['inputSchema'].get('required', [])
         
         param_parts = []
-        for p_name, p_info in params.items():
+        # Limit number of parameters in the signature to prevent 8K+ tool bloat
+        for i, (p_name, p_info) in enumerate(params.items()):
+            if i >= 15: # Only show first 15 params in signature
+                param_parts.append("...")
+                break
             p_type = p_info.get('type', 'any')
             is_req = "*" if p_name in required else ""
             param_parts.append(f"{p_name}{is_req}:{p_type}")
@@ -125,16 +154,20 @@ class HybridToolSearcher:
         self.bm25 = BM25Okapi(tokenized_corpus)
         
         # 2. Check if Qdrant already has data
-        collection_info = self.qdrant.get_collection(Config.QDRANT_COLLECTION)
-        points_count = collection_info.points_count or 0
+        try:
+            collection_info = self.qdrant.get_collection(Config.QDRANT_COLLECTION)
+            points_count = collection_info.points_count or 0
+        except Exception:
+            points_count = 0
+            
         if points_count > 0 and not force_reindex:
             self.is_indexed = True
             return
 
         # 3. Generate embeddings and upload to Qdrant
-        embeddings_list = self.embedder.batch_encode_tools(self.tool_texts)
+        # We process in batches to save memory for 8K+ tools
+        embeddings_list = self.embedder.batch_encode_tools(self.tool_texts, batch_size=16)
         
-        # when building PointStruct points
         points = [
             PointStruct(
                 id=i,
@@ -142,7 +175,7 @@ class HybridToolSearcher:
                 payload={
                     "name": tools[i]['name'],
                     "text": self.tool_texts[i],
-                    "tool": tools[i]   # << include full tool
+                    "tool": tools[i]
                 }
             )
             for i in range(len(tools))
@@ -155,10 +188,11 @@ class HybridToolSearcher:
         )
         
         self.is_indexed = True
+        self._search_cache = {} # Clear cache on reindex
             
     def _bm25_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
         """BM25 lexical search with bounds checking"""
-        if self.bm25 is None:
+        if self.bm25 is None or not self.tool_texts:
             return []
         
         if top_k is None:
@@ -183,6 +217,9 @@ class HybridToolSearcher:
     
     def _dense_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
         """Dense semantic search using Qdrant"""
+        if not self.is_indexed:
+            return []
+            
         if top_k is None:
             top_k = Config.DENSE_CANDIDATES
         
@@ -208,7 +245,7 @@ class HybridToolSearcher:
         max_score = np.max(scores_array)
         
         if max_score == min_score:
-            return [0.5] * len(scores)
+            return [1.0] * len(scores) if max_score > 0 else [0.0] * len(scores)
         
         normalized = (scores_array - min_score) / (max_score - min_score)
         return normalized.tolist()
@@ -285,6 +322,25 @@ class HybridToolSearcher:
         if top_k is None:
             top_k = Config.FINAL_RESULTS
         
+        query_stripped = query.lower().strip()
+        
+        # 0. Check Cache
+        cache_key = f"{query_stripped}:{top_k}"
+        if cache_key in self._search_cache:
+            return self._search_cache[cache_key]
+
+        # 1. Fast Path: Exact name match short-circuit
+        for i, tool in enumerate(self.tools):
+            if tool['name'].lower() == query_stripped:
+                res = [{
+                    'tool_name': tool['name'],
+                    'tool_description': tool.get('description', ''),
+                    'tool_schema': tool,
+                    'relevance_score': 1.0
+                }]
+                self._search_cache[cache_key] = res
+                return res
+
         from concurrent.futures import ThreadPoolExecutor
         
         start_time = time.time()
@@ -297,7 +353,7 @@ class HybridToolSearcher:
             bm25_results = bm25_future.result()
             dense_results = dense_future.result()
         
-        print(f"Hybrid retrieval found {len(bm25_results)} lexical and {len(dense_results)} dense candidates in {time.time() - start_time:.2f}s")
+        # print(f"Hybrid retrieval found {len(bm25_results)} lexical and {len(dense_results)} dense candidates in {time.time() - start_time:.2f}s")
         
 
         # Stage 3: Score fusion
@@ -314,6 +370,12 @@ class HybridToolSearcher:
             return []
             
         actual_top_k = min(top_k, len(candidate_documents))
+        
+        # Limit reranking if retrieval score is extremely high for top item
+        if fused_results[0][0] > 0.95 and len(fused_results) > 1:
+            # We still rerank but could potentially optimize here
+            pass
+
         reranked = self.reranker.rerank(query, candidate_documents, top_n=actual_top_k)
         
         # Build final results
@@ -324,9 +386,18 @@ class HybridToolSearcher:
             
             final_results.append({
                 'tool_name': tool['name'],
-                'tool_description': tool['description'],
+                'tool_description': tool.get('description', ''),
                 'tool_schema': tool,
                 'relevance_score': rerank_item['relevance_score']
             })
+        
+        # Manage cache size
+        if len(self._search_cache) >= self._max_cache_size:
+            # Remove oldest item (FIFO)
+            try:
+                self._search_cache.pop(next(iter(self._search_cache)))
+            except (StopIteration, KeyError):
+                pass
+        self._search_cache[cache_key] = final_results
         
         return final_results
