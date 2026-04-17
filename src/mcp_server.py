@@ -242,13 +242,13 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 # ============= Create MCP Server =============
 
 mcp_stdio = FastMCP(
-    name="mcp-tool-search-server",
+    name="Ansam",
     instructions="Search and execute tools across multiple MCP servers",
     lifespan=app_lifespan
 )
 
 mcp_sse = FastMCP(
-    name="mcp-tool-search-server",
+    name="Ansam",
     instructions="Search and execute tools across multiple MCP servers",
     lifespan=app_lifespan,
     port=8000,

@@ -1,8 +1,8 @@
-# 🔍 MCP Discovery & Proxy Server
+# 🔍 Ansam: MCP Discovery & Proxy Server
 
 **The "Global Tool Shed" for AI Agents.** 
 
-A high-performance Model Context Protocol (MCP) "Super-Server" designed to index, search, and proxy thousands of MCP tools. While standard LLMs struggle with "tool-selection fatigue" when faced with more than 20-30 tools, this platform scales to **8,000+ tools** using an industrial-grade hybrid RAG pipeline.
+Ansam is a high-performance Model Context Protocol (MCP) "Super-Server" designed to index, search, and proxy thousands of MCP tools. While standard LLMs struggle with "tool-selection fatigue" when faced with more than 20-30 tools, Ansam scales to **8,000+ tools** using an industrial-grade hybrid RAG pipeline.
 
 ---
 
@@ -26,9 +26,9 @@ To ensure the agent finds the *exact* tool it needs among thousands, we use a so
 
 ---
 
-## ⚔️ Comparison: Discovery Server vs. Alternatives
+## ⚔️ Comparison: Ansam vs. Alternatives
 
-| Feature | MCP Discovery Server (This Repo) | Anthropic Native Tool Search | Anthropic Claude Code |
+| Feature | Ansam (This Repo) | Anthropic Native Tool Search | Anthropic Claude Code |
 | :--- | :--- | :--- | :--- |
 | **Role** | **Infrastructure/Hub**: A "Global Registry" for tools. | **API Feature**: Native tool discovery in Claude. | **Agent/Client**: A "Hand" that uses tools to write code. |
 | **Tool Capacity** | **Massive (8,000+ tools)**. | **Moderate**: Designed for hundreds/low thousands. | **Limited**: Performance degrades as context fills up. |
