@@ -30,6 +30,10 @@ class Config:
     QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
     QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "mcp_tools")
     
+    # Connection Pool settings
+    MAX_OPEN_CONNECTIONS = 32  # Keep only this many servers active at once
+    WARMUP_LIMIT = 5          # Only pre-connect to the first 5 servers
+    
     # Device
     DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
     

@@ -4,7 +4,7 @@ import logging
 import json
 from pathlib import Path
 from contextlib import AsyncExitStack
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import sys
@@ -21,6 +21,8 @@ import types
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
+
+from src.config import Config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,11 +44,12 @@ def get_shared_searcher() -> HybridToolSearcher:
 
 
 class MCPToolRegistry:
-    """Registry of all MCP servers and their tools"""
+    """Registry of all MCP servers and their tools with LRU connection pooling"""
     
     def __init__(self, config_path: Path):
-        self.servers: Dict[str, Dict] = {}  # server_name -> {config, client, tools}
-        self.exit_stack = AsyncExitStack()
+        self.servers: Dict[str, Dict] = {}  # server_name -> {config, client, tools, exit_stack}
+        self.tool_to_server: Dict[str, str] = {} # tool_name -> server_name
+        self._active_connections: List[str] = [] # LRU list of server names
         self._load_config(config_path)
     
     def _load_config(self, config_path: Path):
@@ -57,50 +60,71 @@ class MCPToolRegistry:
         with open(config_path) as f:
             data = json.load(f)
         
+        self.tool_to_server.clear()
         for server_config in data.get("servers", []):
             server_name = server_config["name"]
             
-            # Build tools map for quick lookup
             tools = {}
             for tool in server_config.get("tools", []):
-                tool_name = tool["name"]
-                tools[tool_name] = {
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get("parameters", {}),
-                    "server_name": server_name
-                }
+                t_name = tool["name"]
+                tools[t_name] = tool
+                self.tool_to_server[t_name] = server_name
             
             self.servers[server_name] = {
                 "config": server_config,
                 "tools": tools,
-                "client": None  # Will be set when connected
+                "client": None,
+                "exit_stack": None # Each server gets its own stack
             }
         
-        logging.info(f"Loaded {len(self.servers)} MCP servers with {self.total_tools()} total tools")
-    
+        logging.info(f"Loaded {len(self.servers)} MCP servers with {len(self.tool_to_server)} total tools")
+
     def total_tools(self) -> int:
         """Return total number of tools across all servers"""
-        return sum(len(server["tools"]) for server in self.servers.values())
+        return len(self.tool_to_server)
     
     def get_server_for_tool(self, tool_name: str) -> Optional[str]:
-        """Find which server hosts the given tool"""
-        for server_name, server_info in self.servers.items():
-            if tool_name in server_info["tools"]:
-                return server_name
-        return None
-    
+        """Find which server hosts the given tool (O(1) lookup)"""
+        return self.tool_to_server.get(tool_name)
+
+    async def _close_connection(self, server_name: str):
+        """Close a specific server connection and clean up its resources"""
+        server_info = self.servers[server_name]
+        if server_info["exit_stack"]:
+            logging.info(f"Closing idle connection to server: {server_name}")
+            try:
+                await server_info["exit_stack"].aclose()
+            except Exception as e:
+                logging.error(f"Error closing server {server_name}: {e}")
+            
+            server_info["client"] = None
+            server_info["exit_stack"] = None
+        
+        if server_name in self._active_connections:
+            self._active_connections.remove(server_name)
+
     async def connect_to_server(self, server_name: str) -> ClientSession:
-        """Connect to an MCP server and return the client session"""
+        """Connect to an MCP server with LRU pool management"""
         server_info = self.servers[server_name]
         
+        # If already connected, move to end of LRU (most recently used)
         if server_info["client"]:
+            if server_name in self._active_connections:
+                self._active_connections.remove(server_name)
+            self._active_connections.append(server_name)
             return server_info["client"]
         
+        # Manage pool size: if we hit the limit, close the oldest connection
+        while len(self._active_connections) >= Config.MAX_OPEN_CONNECTIONS:
+            oldest_server = self._active_connections.pop(0)
+            await self._close_connection(oldest_server)
+
         config = server_info["config"]
         transport = config["transport"]
         
         logging.info(f"Connecting to server '{server_name}' via {transport}")
         
+        stack = AsyncExitStack()
         try:
             async with asyncio.timeout(30.0):
                 if transport == "stdio":
@@ -109,32 +133,49 @@ class MCPToolRegistry:
                         args=config.get("args", []),
                         env=config.get("env")
                     )
-                    # Enter the stdio client context manually and keep it open
-                    read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_client(server_params))
-
-                    client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
-                    # Enter the ClientSession context to start background tasks
+                    read_stream, write_stream = await stack.enter_async_context(stdio_client(server_params))
+                    client = await stack.enter_async_context(ClientSession(read_stream, write_stream))
                     await client.initialize()
                     
                 elif transport == "sse":
                     url = config["url"]
-                    read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url))
-
-                    client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
+                    read_stream, write_stream = await stack.enter_async_context(sse_client(url, headers=config.get("headers")))
+                    client = await stack.enter_async_context(ClientSession(read_stream, write_stream))
                     await client.initialize()
-                    
                 else:
                     raise ValueError(f"Unknown transport: {transport}")
                 
                 server_info["client"] = client
+                server_info["exit_stack"] = stack
+                self._active_connections.append(server_name)
                 return client
             
         except Exception as e:
             logging.error(f"Failed to connect to {server_name}: {traceback.format_exc()}")
-            # Ensure we don't leave half-initialized client
+            await stack.aclose()
             server_info["client"] = None
+            server_info["exit_stack"] = None
             raise ToolError(f"Cannot connect to MCP server '{server_name}': {str(e)}")
-    
+
+    async def warmup(self):
+        """Pre-connect to a limited number of servers to save resources."""
+        limit = Config.WARMUP_LIMIT
+        servers_to_warm = list(self.servers.keys())[:limit]
+        
+        if not servers_to_warm:
+            return
+
+        logging.info(f"Warming up first {len(servers_to_warm)} MCP servers...")
+        tasks = [self.connect_to_server(name) for name in servers_to_warm]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logging.info(f"Warmup complete. {len(self._active_connections)} servers active.")
+
+    async def cleanup(self):
+        """Close all active server connections"""
+        active_copy = list(self._active_connections)
+        for name in active_copy:
+            await self._close_connection(name)
+
     def _format_result(self, result: Any) -> str:
         """Helper to extract text from an MCP CallToolResult object."""
         try:
@@ -152,21 +193,19 @@ class MCPToolRegistry:
             raise ToolError(f"Tool '{tool_name}' not found in any configured MCP server")
         
         try:
-            # Stage 1: Get or create persistent connection
+            # Stage 1: Get or create persistent connection (managed by LRU pool)
             client = await self.connect_to_server(server_name)
             
-            # Stage 2: Call tool with a sensible timeout (e.g. 30s)
-            # This is significantly faster as we skip process spawning / handshakes
+            # Stage 2: Call tool with a sensible timeout (e.g. 60s)
             try:
-                # Some tools take a long time, but we don't want to hang forever
                 async with asyncio.timeout(60.0):
                     result = await client.call_tool(tool_name, arguments=arguments)
                     return self._format_result(result)
             except asyncio.TimeoutError:
                 raise ToolError(f"Tool execution timed out after 60s: {tool_name}")
             except Exception as e:
-                # If the session is dead, we should clear it for the next attempt
-                self.servers[server_name]["client"] = None
+                # If the session is dead, we close it so it can be re-opened fresh next time
+                await self._close_connection(server_name)
                 raise ToolError(f"Error calling tool on {server_name}: {str(e)}")
                 
         except Exception as e:
@@ -174,21 +213,6 @@ class MCPToolRegistry:
             if isinstance(e, ToolError):
                 raise
             raise ToolError(f"Failed to execute '{tool_name}': {str(e)}")
-    
-    async def warmup(self):
-        """Pre-connect to all configured servers in parallel to reduce first-call latency."""
-        logging.info(f"Warming up {len(self.servers)} MCP servers...")
-        
-        # Connect to all servers in parallel
-        tasks = [self.connect_to_server(name) for name in self.servers.keys()]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        success_count = sum(1 for r in results if isinstance(r, ClientSession))
-        logging.info(f"Warmup complete: {success_count}/{len(self.servers)} servers connected")
-
-    async def cleanup(self):
-        """Close all server connections"""
-        await self.exit_stack.aclose()
 
 
 @dataclass
