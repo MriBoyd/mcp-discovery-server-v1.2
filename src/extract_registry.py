@@ -243,10 +243,25 @@ def generate_mcp_servers_json(servers_config: List[Dict[str, Any]], output_file:
         # Merge with existing config
         with open(output_file, 'r') as f:
             existing = json.load(f)
+        
+        # Create a map of server name -> server config
         existing_servers = {s['name']: s for s in existing.get('servers', [])}
         
         for new_server in servers_config:
-            existing_servers[new_server['name']] = new_server
+            name = new_server['name']
+            if name in existing_servers:
+                # Merge tools for the same server
+                existing_tools = {t['name']: t for t in existing_servers[name].get('tools', [])}
+                for new_tool in new_server.get('tools', []):
+                    existing_tools[new_tool['name']] = new_tool
+                
+                # Update the server entry with merged tools
+                updated_server = dict(existing_servers[name])
+                updated_server.update({k: v for k, v in new_server.items() if k != 'tools'})
+                updated_server['tools'] = list(existing_tools.values())
+                existing_servers[name] = updated_server
+            else:
+                existing_servers[name] = new_server
         
         final_config = {"servers": list(existing_servers.values())}
     else:

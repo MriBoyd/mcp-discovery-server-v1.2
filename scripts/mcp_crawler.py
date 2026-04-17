@@ -252,6 +252,7 @@ async def main():
     
     # Output options
     parser.add_argument("--output", default="registry_dump.json", help="Output file path")
+    parser.add_argument("--append", action="store_true", help="Append to existing output file instead of overwriting")
     parser.add_argument("--timeout", type=int, default=30, help="Connection timeout in seconds")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("-H", "--header", action="append", help='Custom header, e.g. "Header: value". Can be used multiple times.')
@@ -364,6 +365,26 @@ async def main():
     
     # Save results
     output_path = Path(args.output)
+    
+    if args.append and output_path.exists():
+        try:
+            with open(output_path, "r") as f:
+                existing_tools = json.load(f)
+                if isinstance(existing_tools, list):
+                    # Use a set of (server, name) to avoid exact duplicates
+                    seen = {(t.get("server_origin"), t.get("name")) for t in existing_tools}
+                    final_tools = list(existing_tools)
+                    for tool in all_tools:
+                        key = (tool.get("server_origin"), tool.get("name"))
+                        if key not in seen:
+                            final_tools.append(tool)
+                            seen.add(key)
+                    all_tools = final_tools
+                else:
+                    logger.warning(f"Existing file {args.output} is not a list, overwriting.")
+        except Exception as e:
+            logger.error(f"Failed to read existing file for appending: {e}")
+
     with open(output_path, "w") as f:
         json.dump(all_tools, f, indent=2)
     

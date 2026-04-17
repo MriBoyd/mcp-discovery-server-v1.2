@@ -102,39 +102,37 @@ class MCPToolRegistry:
         logging.info(f"Connecting to server '{server_name}' via {transport}")
         
         try:
-            if transport == "stdio":
-                server_params = StdioServerParameters(
-                    command=config["command"],
-                    args=config.get("args", []),
-                    env=config.get("env")
-                )
-                # Enter the stdio client context manually and keep it open
-                stdio_cm = stdio_client(server_params)
-                read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_client(server_params))
+            async with asyncio.timeout(30.0):
+                if transport == "stdio":
+                    server_params = StdioServerParameters(
+                        command=config["command"],
+                        args=config.get("args", []),
+                        env=config.get("env")
+                    )
+                    # Enter the stdio client context manually and keep it open
+                    read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_client(server_params))
 
-                client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
-                # Enter the ClientSession context to start background tasks
-                await client.initialize()
-                # Store the transport context manager so we can close it later
-                server_info["_transport_cm"] = stdio_cm
-                
-            elif transport == "sse":
-                url = config["url"]
-                sse_cm = sse_client(url)
-                read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url))
+                    client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
+                    # Enter the ClientSession context to start background tasks
+                    await client.initialize()
+                    
+                elif transport == "sse":
+                    url = config["url"]
+                    read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url))
 
-                client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
-                await client.initialize()
-                server_info["_transport_cm"] = sse_cm
+                    client = await self.exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
+                    await client.initialize()
+                    
+                else:
+                    raise ValueError(f"Unknown transport: {transport}")
                 
-            else:
-                raise ValueError(f"Unknown transport: {transport}")
-            
-            server_info["client"] = client
-            return client
+                server_info["client"] = client
+                return client
             
         except Exception as e:
-            logging.error(f"Failed to connect to {server_name}: {e}")
+            logging.error(f"Failed to connect to {server_name}: {traceback.format_exc()}")
+            # Ensure we don't leave half-initialized client
+            server_info["client"] = None
             raise ToolError(f"Cannot connect to MCP server '{server_name}': {str(e)}")
     
     def _format_result(self, result: Any) -> str:
@@ -153,38 +151,41 @@ class MCPToolRegistry:
         if not server_name:
             raise ToolError(f"Tool '{tool_name}' not found in any configured MCP server")
         
-        config = self.servers[server_name]["config"]
-        transport = config["transport"]
-        
         try:
-            if transport == "stdio":
-                server_params = StdioServerParameters(
-                    command=config["command"],
-                    args=config.get("args", []),
-                    env=config.get("env")
-                )
-                # Using 'async with' here ensures the Cancel Scope is cleaned up 
-                # within this specific task, fixing the RuntimeError.
-                async with stdio_client(server_params) as (read, write):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        result = await session.call_tool(tool_name, arguments=arguments)
-                        return self._format_result(result)
-
-            elif transport == "sse":
-                async with sse_client(config["url"]) as (read, write):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        result = await session.call_tool(tool_name, arguments=arguments)
-                        return self._format_result(result)
+            # Stage 1: Get or create persistent connection
+            client = await self.connect_to_server(server_name)
             
-            else:
-                raise ValueError(f"Unknown transport: {transport}")
+            # Stage 2: Call tool with a sensible timeout (e.g. 30s)
+            # This is significantly faster as we skip process spawning / handshakes
+            try:
+                # Some tools take a long time, but we don't want to hang forever
+                async with asyncio.timeout(60.0):
+                    result = await client.call_tool(tool_name, arguments=arguments)
+                    return self._format_result(result)
+            except asyncio.TimeoutError:
+                raise ToolError(f"Tool execution timed out after 60s: {tool_name}")
+            except Exception as e:
+                # If the session is dead, we should clear it for the next attempt
+                self.servers[server_name]["client"] = None
+                raise ToolError(f"Error calling tool on {server_name}: {str(e)}")
                 
         except Exception as e:
             logging.error(f"Error executing {tool_name}: {traceback.format_exc()}")
+            if isinstance(e, ToolError):
+                raise
             raise ToolError(f"Failed to execute '{tool_name}': {str(e)}")
     
+    async def warmup(self):
+        """Pre-connect to all configured servers in parallel to reduce first-call latency."""
+        logging.info(f"Warming up {len(self.servers)} MCP servers...")
+        
+        # Connect to all servers in parallel
+        tasks = [self.connect_to_server(name) for name in self.servers.keys()]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        success_count = sum(1 for r in results if isinstance(r, ClientSession))
+        logging.info(f"Warmup complete: {success_count}/{len(self.servers)} servers connected")
+
     async def cleanup(self):
         """Close all server connections"""
         await self.exit_stack.aclose()
@@ -203,6 +204,10 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     searcher = get_shared_searcher()
     config_path = Path(__file__).parent / "mcp_servers.json"
     registry = MCPToolRegistry(config_path)
+    
+    # Warm up in background to avoid blocking server start
+    # but still get them ready as soon as possible
+    asyncio.create_task(registry.warmup())
     
     yield AppContext(searcher=searcher, registry=registry)
     
