@@ -231,9 +231,13 @@ class MCPToolRegistry:
         return client
 
     async def warmup(self):
-        """Pre-connect to a limited number of servers to save resources."""
-        # Small delay to let the main server settle before starting background processes
-        await asyncio.sleep(2.0)
+        """
+        Robust Warmup:
+        1. Staggered: Wait 500ms between each server to avoid CPU spikes.
+        2. Readiness Probing: Verify the connection is actually responsive.
+        """
+        # Initial 1s delay to let the main process bind to its port
+        await asyncio.sleep(1.0)
         
         limit = Config.WARMUP_LIMIT
         servers_to_warm = list(self.servers.keys())[:limit]
@@ -241,13 +245,28 @@ class MCPToolRegistry:
         if not servers_to_warm:
             return
 
-        logging.info(f"Warming up first {len(servers_to_warm)} MCP servers...")
-        for name in servers_to_warm:
+        logging.info(f"Starting staggered warmup for {len(servers_to_warm)} servers...")
+        
+        for i, name in enumerate(servers_to_warm):
             try:
-                await self.connect_to_server(name)
+                # 1. Staggered delay (except for the first one)
+                if i > 0:
+                    await asyncio.sleep(0.5)
+                
+                # 2. Connect
+                client = await self.connect_to_server(name)
+                
+                # 3. Readiness Probe: Send a simple request to ensure session is alive
+                async with asyncio.timeout(5.0):
+                    await client.list_tools()
+                
+                logging.info(f"  [✓] {name} is ready")
+                
             except Exception as e:
-                logging.warning(f"Warmup failed for {name}: {e}")
-        logging.info(f"Warmup complete. {len(self._active_connections)} servers active.")
+                logging.warning(f"  [✗] Warmup/Probe failed for {name}: {e}")
+                # We don't call _close_connection here to allow it to retry on the first real call
+                
+        logging.info(f"Warmup phase complete. {len(self._active_connections)} servers active.")
 
     async def cleanup(self):
         """Close all active server connections"""
