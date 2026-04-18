@@ -23,6 +23,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.sse import sse_client
 
 from src.config import Config
+from src.auth_manager import AuthManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,8 +31,9 @@ logging.basicConfig(
     stream=sys.stderr
 )
 
-# Module-level singleton for hybrid searcher
+# Module-level singleton for hybrid searcher and auth manager
 _shared_searcher: Optional[HybridToolSearcher] = None
+_auth_manager: Optional[AuthManager] = None
 
 def get_shared_searcher() -> HybridToolSearcher:
     """Lazily initialize and return a single shared HybridToolSearcher instance."""
@@ -42,14 +44,22 @@ def get_shared_searcher() -> HybridToolSearcher:
             _shared_searcher.is_indexed = True
     return _shared_searcher
 
+def get_auth_manager() -> AuthManager:
+    """Lazily initialize and return a single shared AuthManager instance."""
+    global _auth_manager
+    if _auth_manager is None:
+        _auth_manager = AuthManager()
+    return _auth_manager
+
 
 class MCPToolRegistry:
     """Registry of all MCP servers and their tools with LRU connection pooling"""
     
-    def __init__(self, config_path: Path):
+    def __init__(self, config_path: Path, auth_manager: AuthManager):
         self.servers: Dict[str, Dict] = {}  # server_name -> {config, client, tools, exit_stack}
         self.tool_to_server: Dict[str, str] = {} # tool_name -> server_name
         self._active_connections: List[str] = [] # LRU list of server names
+        self.auth_manager = auth_manager
         self._load_config(config_path)
     
     def _load_config(self, config_path: Path):
@@ -124,6 +134,19 @@ class MCPToolRegistry:
         
         logging.info(f"Connecting to server '{server_name}' via {transport}")
         
+        # Handle OAuth for SSE/HTTP
+        headers = config.get("headers", {})
+        if "auth" in config:
+            token = self.auth_manager.get_token(server_name)
+            if not token:
+                # Try refreshing
+                token = await self.auth_manager.refresh_token(server_name, config)
+            
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            else:
+                logging.warning(f"No valid token for {server_name}. User may need to authenticate.")
+
         stack = AsyncExitStack()
         try:
             async with asyncio.timeout(30.0):
@@ -139,7 +162,7 @@ class MCPToolRegistry:
                     
                 elif transport == "sse":
                     url = config["url"]
-                    read_stream, write_stream = await stack.enter_async_context(sse_client(url, headers=config.get("headers")))
+                    read_stream, write_stream = await stack.enter_async_context(sse_client(url, headers=headers))
                     client = await stack.enter_async_context(ClientSession(read_stream, write_stream))
                     await client.initialize()
                 else:
@@ -187,11 +210,24 @@ class MCPToolRegistry:
         except Exception:
             return str(result)
     
-    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any], auth_manager: AuthManager) -> str:
         server_name = self.get_server_for_tool(tool_name)
         if not server_name:
             raise ToolError(f"Tool '{tool_name}' not found in any configured MCP server")
         
+        server_config = self.servers[server_name]["config"]
+        
+        # Check if auth is required but missing/stale
+        if "auth" in server_config:
+            token = auth_manager.get_token(server_name)
+            if not token:
+                token = await auth_manager.refresh_token(server_name, server_config)
+            
+            if not token:
+                # Still no token? This shouldn't happen if we filtered search results,
+                # but if it does, we fail with a standard error.
+                raise ToolError(f"Authentication required for '{server_name}'. Please run setup_server.py to authenticate.")
+
         try:
             # Stage 1: Get or create persistent connection (managed by LRU pool)
             client = await self.connect_to_server(server_name)
@@ -220,20 +256,22 @@ class AppContext:
     """Application context with shared resources"""
     searcher: HybridToolSearcher
     registry: MCPToolRegistry
+    auth_manager: AuthManager
 
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Manage application lifecycle"""
     searcher = get_shared_searcher()
+    auth_manager = get_auth_manager()
     config_path = Path(__file__).parent / "mcp_servers.json"
-    registry = MCPToolRegistry(config_path)
+    registry = MCPToolRegistry(config_path, auth_manager)
     
     # Warm up in background to avoid blocking server start
     # but still get them ready as soon as possible
     asyncio.create_task(registry.warmup())
     
-    yield AppContext(searcher=searcher, registry=registry)
+    yield AppContext(searcher=searcher, registry=registry, auth_manager=auth_manager)
     
     # Cleanup
     await registry.cleanup()
@@ -278,6 +316,26 @@ async def search_tools(
         
         # Perform hybrid search
         results = await asyncio.to_thread(searcher.search, query)
+        
+        # Filter results based on authentication status
+        authenticated_results = []
+        app_ctx = ctx.request_context.lifespan_context
+        for res in results:
+            server_name = app_ctx.registry.get_server_for_tool(res['tool_name'])
+            if server_name:
+                server_config = app_ctx.registry.servers[server_name]["config"]
+                if "auth" in server_config:
+                    # Check if we have a token or can refresh
+                    token = app_ctx.auth_manager.get_token(server_name)
+                    if not token:
+                        token = await app_ctx.auth_manager.refresh_token(server_name, server_config)
+                    
+                    if not token:
+                        # Skip this tool, user hasn't authenticated yet
+                        continue
+            authenticated_results.append(res)
+        
+        results = authenticated_results
         
         await ctx.report_progress(0.8, 1.0, "Formatting results...")
         
@@ -356,8 +414,9 @@ async def call_tool(
         await ctx.report_progress(0.3, 1.0, f"Looking up server for '{tool_name}'...")
         
         # Execute the tool using registry
-        registry = ctx.request_context.lifespan_context.registry
-        result = await registry.execute_tool(tool_name, args_dict)
+        app_ctx = ctx.request_context.lifespan_context
+        registry = app_ctx.registry
+        result = await registry.execute_tool(tool_name, args_dict, app_ctx.auth_manager)
         
         await ctx.report_progress(0.9, 1.0, "Tool execution completed")
         

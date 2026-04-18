@@ -383,6 +383,39 @@
           }
         }
       ]
+    },
+    {
+      "name": "figma-mcp",
+      "transport": "http",
+      "url": "https://mcp.figma.com/mcp",
+      "auth": {
+        "issuer": "https://api.figma.com",
+        "client_id": "YOUR_CLIENT_ID",
+        "client_secret": "YOUR_CLIENT_SECRET",
+        "authorization_endpoint": "https://www.figma.com/oauth/mcp",
+        "token_endpoint": "https://api.figma.com/v1/oauth/token",
+        "grant_types_supported": [
+          "authorization_code",
+          "refresh_token",
+          "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        ],
+        "response_types_supported": [
+          "code"
+        ],
+        "registration_endpoint": "https://api.figma.com/v1/oauth/mcp/register",
+        "code_challenge_methods_supported": [
+          "S256"
+        ],
+        "token_endpoint_auth_methods_supported": [
+          "client_secret_basic",
+          "client_secret_post"
+        ],
+        "scopes_supported": [
+          "mcp:connect"
+        ],
+        "require_state_parameter": true
+      },
+      "tools": []
     }
   ]
 }
