@@ -4,7 +4,7 @@ import logging
 import json
 from pathlib import Path
 from contextlib import AsyncExitStack
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import sys
@@ -52,11 +52,112 @@ def get_auth_manager() -> AuthManager:
     return _auth_manager
 
 
+class ServerConnection:
+    """Manages the lifecycle of a single MCP server connection in its own dedicated task."""
+    def __init__(self, server_name: str, config: Dict, auth_manager: AuthManager):
+        self.server_name = server_name
+        self.config = config
+        self.auth_manager = auth_manager
+        self.client: Optional[ClientSession] = None
+        self.error: Optional[Exception] = None
+        self._connected_event = asyncio.Event()
+        self._stop_event = asyncio.Event()
+        self._task: Optional[asyncio.Task] = None
+        self._stack: Optional[AsyncExitStack] = None
+        self._lock = asyncio.Lock()
+
+    async def start(self):
+        """Start the connection task and wait for it to be ready."""
+        async with self._lock:
+            if self._task and not self._task.done():
+                await self._connected_event.wait()
+                if self.error:
+                    raise self.error
+                return self.client
+
+            self._connected_event.clear()
+            self._stop_event.clear()
+            self.error = None
+            self._task = asyncio.create_task(self._run())
+            
+            try:
+                async with asyncio.timeout(35.0): # Slightly longer than inner timeout
+                    await self._connected_event.wait()
+            except asyncio.TimeoutError:
+                self.error = ToolError(f"Connection to '{self.server_name}' timed out during startup")
+            
+            if self.error:
+                # Try to cleanup if task failed
+                await self.stop()
+                if isinstance(self.error, ToolError):
+                    raise self.error
+                raise ToolError(f"Failed to connect to '{self.server_name}': {str(self.error)}")
+                
+            return self.client
+
+    async def _run(self):
+        """Background task that owns the connection and its contexts."""
+        self._stack = AsyncExitStack()
+        try:
+            transport = self.config["transport"]
+            headers = self.config.get("headers", {})
+            
+            if "auth" in self.config:
+                token = self.auth_manager.get_token(self.server_name)
+                if not token:
+                    token = await self.auth_manager.refresh_token(self.server_name, self.config)
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+
+            async with asyncio.timeout(30.0):
+                if transport == "stdio":
+                    server_params = StdioServerParameters(
+                        command=self.config["command"],
+                        args=self.config.get("args", []),
+                        env=self.config.get("env")
+                    )
+                    read_stream, write_stream = await self._stack.enter_async_context(stdio_client(server_params))
+                    self.client = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
+                    await self.client.initialize()
+                elif transport == "sse":
+                    url = self.config["url"]
+                    read_stream, write_stream = await self._stack.enter_async_context(sse_client(url, headers=headers))
+                    self.client = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
+                    await self.client.initialize()
+                else:
+                    raise ValueError(f"Unknown transport: {transport}")
+                
+            # Successfully connected
+            self._connected_event.set()
+            
+            # Keep the task alive until stopped
+            await self._stop_event.wait()
+            
+        except Exception as e:
+            self.error = e
+            self._connected_event.set()
+        finally:
+            if self._stack:
+                await self._stack.aclose()
+            self.client = None
+            self._stack = None
+
+    async def stop(self):
+        """Stop the connection task and wait for cleanup."""
+        self._stop_event.set()
+        if self._task:
+            if not self._task.done():
+                try:
+                    await asyncio.wait_for(self._task, timeout=5.0)
+                except (asyncio.TimeoutError, Exception):
+                    self._task.cancel()
+            self._task = None
+
 class MCPToolRegistry:
     """Registry of all MCP servers and their tools with LRU connection pooling"""
     
     def __init__(self, config_path: Path, auth_manager: AuthManager):
-        self.servers: Dict[str, Dict] = {}  # server_name -> {config, client, tools, exit_stack}
+        self.servers: Dict[str, Dict] = {}  # server_name -> {config, tools, connection}
         self.tool_to_server: Dict[str, str] = {} # tool_name -> server_name
         self._active_connections: List[str] = [] # LRU list of server names
         self.auth_manager = auth_manager
@@ -83,8 +184,7 @@ class MCPToolRegistry:
             self.servers[server_name] = {
                 "config": server_config,
                 "tools": tools,
-                "client": None,
-                "exit_stack": None # Each server gets its own stack
+                "connection": ServerConnection(server_name, server_config, self.auth_manager)
             }
         
         logging.info(f"Loaded {len(self.servers)} MCP servers with {len(self.tool_to_server)} total tools")
@@ -100,15 +200,9 @@ class MCPToolRegistry:
     async def _close_connection(self, server_name: str):
         """Close a specific server connection and clean up its resources"""
         server_info = self.servers[server_name]
-        if server_info["exit_stack"]:
-            logging.info(f"Closing idle connection to server: {server_name}")
-            try:
-                await server_info["exit_stack"].aclose()
-            except Exception as e:
-                logging.error(f"Error closing server {server_name}: {e}")
-            
-            server_info["client"] = None
-            server_info["exit_stack"] = None
+        conn = server_info["connection"]
+        logging.info(f"Closing connection to server: {server_name}")
+        await conn.stop()
         
         if server_name in self._active_connections:
             self._active_connections.remove(server_name)
@@ -116,72 +210,31 @@ class MCPToolRegistry:
     async def connect_to_server(self, server_name: str) -> ClientSession:
         """Connect to an MCP server with LRU pool management"""
         server_info = self.servers[server_name]
+        conn = server_info["connection"]
         
         # If already connected, move to end of LRU (most recently used)
-        if server_info["client"]:
+        if conn.client:
             if server_name in self._active_connections:
                 self._active_connections.remove(server_name)
             self._active_connections.append(server_name)
-            return server_info["client"]
+            return conn.client
         
         # Manage pool size: if we hit the limit, close the oldest connection
         while len(self._active_connections) >= Config.MAX_OPEN_CONNECTIONS:
             oldest_server = self._active_connections.pop(0)
             await self._close_connection(oldest_server)
 
-        config = server_info["config"]
-        transport = config["transport"]
-        
-        logging.info(f"Connecting to server '{server_name}' via {transport}")
-        
-        # Handle OAuth for SSE/HTTP
-        headers = config.get("headers", {})
-        if "auth" in config:
-            token = self.auth_manager.get_token(server_name)
-            if not token:
-                # Try refreshing
-                token = await self.auth_manager.refresh_token(server_name, config)
-            
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            else:
-                logging.warning(f"No valid token for {server_name}. User may need to authenticate.")
-
-        stack = AsyncExitStack()
-        try:
-            async with asyncio.timeout(30.0):
-                if transport == "stdio":
-                    server_params = StdioServerParameters(
-                        command=config["command"],
-                        args=config.get("args", []),
-                        env=config.get("env")
-                    )
-                    read_stream, write_stream = await stack.enter_async_context(stdio_client(server_params))
-                    client = await stack.enter_async_context(ClientSession(read_stream, write_stream))
-                    await client.initialize()
-                    
-                elif transport == "sse":
-                    url = config["url"]
-                    read_stream, write_stream = await stack.enter_async_context(sse_client(url, headers=headers))
-                    client = await stack.enter_async_context(ClientSession(read_stream, write_stream))
-                    await client.initialize()
-                else:
-                    raise ValueError(f"Unknown transport: {transport}")
-                
-                server_info["client"] = client
-                server_info["exit_stack"] = stack
-                self._active_connections.append(server_name)
-                return client
-            
-        except Exception as e:
-            logging.error(f"Failed to connect to {server_name}: {traceback.format_exc()}")
-            await stack.aclose()
-            server_info["client"] = None
-            server_info["exit_stack"] = None
-            raise ToolError(f"Cannot connect to MCP server '{server_name}': {str(e)}")
+        client = await conn.start()
+        # Small grace period for server to fully initialize its session
+        await asyncio.sleep(1.0)
+        self._active_connections.append(server_name)
+        return client
 
     async def warmup(self):
         """Pre-connect to a limited number of servers to save resources."""
+        # Temporarily disabled to avoid race conditions during startup
+        return
+        
         limit = Config.WARMUP_LIMIT
         servers_to_warm = list(self.servers.keys())[:limit]
         
@@ -189,8 +242,11 @@ class MCPToolRegistry:
             return
 
         logging.info(f"Warming up first {len(servers_to_warm)} MCP servers...")
-        tasks = [self.connect_to_server(name) for name in servers_to_warm]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for name in servers_to_warm:
+            try:
+                await self.connect_to_server(name)
+            except Exception as e:
+                logging.warning(f"Warmup failed for {name}: {e}")
         logging.info(f"Warmup complete. {len(self._active_connections)} servers active.")
 
     async def cleanup(self):
@@ -224,30 +280,33 @@ class MCPToolRegistry:
                 token = await auth_manager.refresh_token(server_name, server_config)
             
             if not token:
-                # Still no token? This shouldn't happen if we filtered search results,
-                # but if it does, we fail with a standard error.
                 raise ToolError(f"Authentication required for '{server_name}'. Please run setup_server.py to authenticate.")
 
         try:
-            # Stage 1: Get or create persistent connection (managed by LRU pool)
+            # Stage 1: Get or create persistent connection
             client = await self.connect_to_server(server_name)
             
             # Stage 2: Call tool with a sensible timeout (e.g. 60s)
             try:
                 async with asyncio.timeout(60.0):
                     result = await client.call_tool(tool_name, arguments=arguments)
+                    
+                    if hasattr(result, 'isError') and result.isError:
+                        return f"❌ **Tool returned an error:**\n\n{self._format_result(result)}"
+                        
                     return self._format_result(result)
             except asyncio.TimeoutError:
                 raise ToolError(f"Tool execution timed out after 60s: {tool_name}")
             except Exception as e:
                 # If the session is dead, we close it so it can be re-opened fresh next time
+                logging.error(f"Error calling tool {tool_name} on {server_name}, closing connection: {e}")
                 await self._close_connection(server_name)
                 raise ToolError(f"Error calling tool on {server_name}: {str(e)}")
                 
         except Exception as e:
-            logging.error(f"Error executing {tool_name}: {traceback.format_exc()}")
             if isinstance(e, ToolError):
                 raise
+            logging.error(f"Error executing {tool_name}: {traceback.format_exc()}")
             raise ToolError(f"Failed to execute '{tool_name}': {str(e)}")
 
 
@@ -394,22 +453,25 @@ async def search_tools(
 )
 async def call_tool(
     tool_name: str,
-    arguments: str,
+    arguments: Union[str, Dict[str, Any]],
     ctx: Context[ServerSession, AppContext]
 ) -> str:
     """
     Call a tool on its original MCP server.
     
     Args:
-        tool_name: The exact unique identifier of the tool (e.g., "Demo--Everything-__echo")
-        arguments: JSON string of arguments to pass to the tool (e.g., '{"message": "Hello"}')
+        tool_name: The exact unique identifier of the tool (e.g., "send-email")
+        arguments: JSON string or dictionary of arguments to pass to the tool.
     """
     try:
-        # Parse arguments
-        try:
-            args_dict = json.loads(arguments) if arguments else {}
-        except json.JSONDecodeError as e:
-            raise ToolError(f"Invalid JSON arguments: {str(e)}. Arguments must be a valid JSON string.")
+        # Parse arguments if string, else use as-is
+        if isinstance(arguments, str):
+            try:
+                args_dict = json.loads(arguments) if arguments else {}
+            except json.JSONDecodeError as e:
+                raise ToolError(f"Invalid JSON arguments: {str(e)}. Arguments must be a valid JSON string or a JSON object.")
+        else:
+            args_dict = arguments
         
         await ctx.report_progress(0.3, 1.0, f"Looking up server for '{tool_name}'...")
         
