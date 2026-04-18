@@ -119,7 +119,7 @@ class ServerConnection:
                     read_stream, write_stream = await self._stack.enter_async_context(stdio_client(server_params))
                     self.client = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
                     await self.client.initialize()
-                elif transport == "sse":
+                elif transport in ["sse", "http"]:
                     url = self.config["url"]
                     read_stream, write_stream = await self._stack.enter_async_context(sse_client(url, headers=headers))
                     self.client = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
@@ -232,8 +232,8 @@ class MCPToolRegistry:
 
     async def warmup(self):
         """Pre-connect to a limited number of servers to save resources."""
-        # Temporarily disabled to avoid race conditions during startup
-        return
+        # Small delay to let the main server settle before starting background processes
+        await asyncio.sleep(2.0)
         
         limit = Config.WARMUP_LIMIT
         servers_to_warm = list(self.servers.keys())[:limit]
