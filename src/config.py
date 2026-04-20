@@ -31,19 +31,19 @@ class Config:
     QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "mcp_tools")
     
     # Connection Pool settings
-    MAX_OPEN_CONNECTIONS = 32  # Keep only this many servers active at once
-    WARMUP_LIMIT = 5          # Only pre-connect to the first 5 servers
+    MAX_OPEN_CONNECTIONS = int(os.getenv("MAX_OPEN_CONNECTIONS", "32"))
+    WARMUP_LIMIT = int(os.getenv("WARMUP_LIMIT", "5"))
     
     # Rate Limiting
-    GLOBAL_RATE = 10.0         # Global requests per second
-    GLOBAL_CAPACITY = 20       # Global burst capacity
-    PER_SERVER_RATE = 2.0      # Per-server requests per second
-    PER_SERVER_CAPACITY = 5    # Per-server burst capacity
+    GLOBAL_RATE = float(os.getenv("GLOBAL_RATE", "10.0"))
+    GLOBAL_CAPACITY = int(os.getenv("GLOBAL_CAPACITY", "20"))
+    PER_SERVER_RATE = float(os.getenv("PER_SERVER_RATE", "2.0"))
+    PER_SERVER_CAPACITY = int(os.getenv("PER_SERVER_CAPACITY", "5"))
     
     # Circuit Breaker
-    CB_FAILURE_THRESHOLD = 5   # Failures before opening circuit
-    CB_RECOVERY_TIMEOUT = 30.0 # Seconds before moving to half-open
-    CB_HALF_OPEN_SUCCESS = 2   # Successes required to close circuit
+    CB_FAILURE_THRESHOLD = int(os.getenv("CB_FAILURE_THRESHOLD", "5"))
+    CB_RECOVERY_TIMEOUT = float(os.getenv("CB_RECOVERY_TIMEOUT", "30.0"))
+    CB_HALF_OPEN_SUCCESS = int(os.getenv("CB_HALF_OPEN_SUCCESS", "2"))
     
     # Device
     DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
