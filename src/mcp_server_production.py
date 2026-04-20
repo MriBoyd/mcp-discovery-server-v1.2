@@ -328,11 +328,19 @@ async def app_lifespan(server: FastMCP):
         server_configs = []
 
     # Build tool->server map and register server configs
+    all_tools = []
     for cfg in server_configs:
         name = cfg.get("name")
         for tool in cfg.get("tools", []):
             tool_to_server_map[tool.get("name")] = name
+            all_tools.append(tool)
         proxy_manager.register_server(cfg)
+
+    # Index searcher with all tools found in config
+    # This avoids the Qdrant scroll bottleneck on startup
+    if all_tools:
+        logger.info(f"Indexing {len(all_tools)} tools into hybrid searcher...")
+        await asyncio.to_thread(searcher.index, all_tools)
 
     # Initialize hot-tier servers (run synchronously here to ensure availability)
     hot_tier_servers = [c for c in server_configs if c.get("priority") == "high"][:10]

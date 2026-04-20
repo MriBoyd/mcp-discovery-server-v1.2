@@ -13,6 +13,8 @@ from src.code_embedder import CodeEmbedder
 from src.local_reranker import LocalReranker
 from src.config import Config
 
+from collections import OrderedDict
+
 class HybridToolSearcher:
     """
     Three-stage hybrid search:
@@ -26,8 +28,11 @@ class HybridToolSearcher:
         self.tools = []
         self.tool_texts = []
         self.is_indexed = False
-        self._search_cache = {}
-        self._max_cache_size = 100
+        
+        # LRU Cache settings
+        self._search_cache = OrderedDict()
+        self._max_cache_size = Config.SEARCH_CACHE_SIZE if hasattr(Config, 'SEARCH_CACHE_SIZE') else 100
+        self._cache_ttl = Config.SEARCH_CACHE_TTL if hasattr(Config, 'SEARCH_CACHE_TTL') else 3600
         
         # Initialize regex for tokenization
         import re
@@ -59,52 +64,47 @@ class HybridToolSearcher:
         return [t.lower() for t in tokens if t]
 
     def _ensure_collection(self):
-        """Ensure Qdrant collection exists and load tool data if needed"""
-        collections = self.qdrant.get_collections().collections
-        exists = any(c.name == Config.QDRANT_COLLECTION for c in collections)
-        
-        if not exists:
-            self.qdrant.create_collection(
-                collection_name=Config.QDRANT_COLLECTION,
-                vectors_config=VectorParams(
-                    size=Config.EMBEDDING_DIM,
-                    distance=Distance.COSINE
-                )
-            )
-        else:
-            # Load tools from existing collection to populate self.tools and self.tool_texts
-            # Use scrolling to retrieve all points
-            all_points = []
-            next_page_offset = None
+        """Ensure Qdrant collection exists.
+        Note: Tool data is now loaded via index() to avoid startup scrolling bottlenecks.
+        """
+        try:
+            collections = self.qdrant.get_collections().collections
+            exists = any(c.name == Config.QDRANT_COLLECTION for c in collections)
             
-            while True:
-                points, next_page_offset = self.qdrant.scroll(
+            if not exists:
+                self.qdrant.create_collection(
                     collection_name=Config.QDRANT_COLLECTION,
-                    limit=1000,
-                    offset=next_page_offset,
-                    with_payload=True,
-                    with_vectors=False
+                    vectors_config=VectorParams(
+                        size=Config.EMBEDDING_DIM,
+                        distance=Distance.COSINE
+                    )
                 )
-                all_points.extend(points)
-                if next_page_offset is None:
-                    break
-            
-            # Sort points by ID if they were indexed sequentially
-            all_points.sort(key=lambda p: p.id if isinstance(p.id, int) else 0)
-            
-            self.tools = [
-                p.payload.get("tool", {"name": p.payload.get("name", "Unknown"),
-                                    "description": p.payload.get("text", "")})
-                for p in all_points if p.payload
-            ]
-            self.tool_texts = [p.payload.get("text", "") for p in all_points if p.payload]
+        except Exception as e:
+            logging.error(f"Failed to ensure Qdrant collection: {e}")
 
-            if self.tool_texts:
-                # Rebuild BM25
-                tokenized_corpus = [self._tokenize(text) for text in self.tool_texts]
-                self.bm25 = BM25Okapi(tokenized_corpus)
-                self.is_indexed = True
-                self._search_cache = {} # Clear cache on reload
+    def _get_from_cache(self, key: str) -> Optional[List[Dict[str, Any]]]:
+        """Get item from LRU cache with TTL check"""
+        if key not in self._search_cache:
+            return None
+        
+        timestamp, result = self._search_cache[key]
+        if time.time() - timestamp > self._cache_ttl:
+            del self._search_cache[key]
+            return None
+            
+        self._search_cache.move_to_end(key)
+        return result
+
+    def _save_to_cache(self, key: str, value: List[Dict[str, Any]]):
+        """Save item to LRU cache"""
+        if key in self._search_cache:
+            self._search_cache.move_to_end(key)
+        
+        self._search_cache[key] = (time.time(), value)
+        
+        if len(self._search_cache) > self._max_cache_size:
+            self._search_cache.popitem(last=False)
+
     
     def _prepare_tool_text(self, tool: Dict[str, Any]) -> str:
         """
@@ -144,52 +144,85 @@ class HybridToolSearcher:
     
     def index(self, tools: List[Dict[str, Any]], force_reindex: bool = False):
         """
-        Index all tools with BM25 and Qdrant
+        Index tools incrementally. Only embeds tools not already in Qdrant.
         """
+        import uuid
+        import hashlib
+        
         self.tools = tools
         self.tool_texts = [self._prepare_tool_text(tool) for tool in tools]
         
-        # 1. Build BM25 index (lexical)
+        # 1. Build BM25 index (lexical) - must be in memory
         tokenized_corpus = [self._tokenize(text) for text in self.tool_texts]
         self.bm25 = BM25Okapi(tokenized_corpus)
         
-        # 2. Check if Qdrant already has data
-        try:
-            collection_info = self.qdrant.get_collection(Config.QDRANT_COLLECTION)
-            points_count = collection_info.points_count or 0
-        except Exception:
-            points_count = 0
-            
-        if points_count > 0 and not force_reindex:
+        # 2. Identify missing tools in Qdrant
+        indexed_names = set()
+        if not force_reindex:
+            try:
+                # Fetch only names to check existence efficiently
+                offset = None
+                while True:
+                    points, offset = self.qdrant.scroll(
+                        collection_name=Config.QDRANT_COLLECTION,
+                        limit=1000,
+                        offset=offset,
+                        with_payload=["name"],
+                        with_vectors=False
+                    )
+                    for p in points:
+                        if p.payload and "name" in p.payload:
+                            indexed_names.add(p.payload["name"])
+                    if offset is None:
+                        break
+            except Exception as e:
+                logging.warning(f"Incremental check failed, may re-embed some tools: {e}")
+
+        # 3. Filter tools that need embedding
+        to_index_indices = []
+        for i, tool in enumerate(tools):
+            if force_reindex or tool['name'] not in indexed_names:
+                to_index_indices.append(i)
+        
+        if not to_index_indices:
+            logging.info("All tools already indexed in Qdrant.")
             self.is_indexed = True
+            self._search_cache.clear()
             return
 
-        # 3. Generate embeddings and upload to Qdrant
-        # We process in batches to save memory for 8K+ tools
-        embeddings_list = self.embedder.batch_encode_tools(self.tool_texts, batch_size=16)
+        logging.info(f"Embedding {len(to_index_indices)} new/missing tools...")
         
-        points = [
-            PointStruct(
-                id=i,
-                vector=embeddings_list[i],
+        # 4. Generate embeddings for ONLY the new tools
+        texts_to_embed = [self.tool_texts[i] for i in to_index_indices]
+        # batch_encode_tools handles batching internally
+        embeddings_list = self.embedder.batch_encode_tools(texts_to_embed, batch_size=16)
+        
+        def str_to_uuid(s):
+            # Deterministic UUID based on tool name
+            return str(uuid.uuid5(uuid.NAMESPACE_DNS, s))
+
+        points = []
+        for j, i in enumerate(to_index_indices):
+            points.append(PointStruct(
+                id=str_to_uuid(tools[i]['name']),
+                vector=embeddings_list[j],
                 payload={
                     "name": tools[i]['name'],
                     "text": self.tool_texts[i],
                     "tool": tools[i]
                 }
-            )
-            for i in range(len(tools))
-        ]
+            ))
         
-        # Batch upload to Qdrant
-        self.qdrant.upsert(
-            collection_name=Config.QDRANT_COLLECTION,
-            points=points
-        )
+        # 5. Batch upload to Qdrant
+        for i in range(0, len(points), 100):
+            self.qdrant.upsert(
+                collection_name=Config.QDRANT_COLLECTION,
+                points=points[i:i+100]
+            )
         
         self.is_indexed = True
-        self._search_cache = {} # Clear cache on reindex
-            
+        self._search_cache.clear()
+
     def _bm25_search(self, query: str, top_k: Optional[int] = None) -> List[Tuple[float, int]]:
         """BM25 lexical search with bounds checking"""
         if self.bm25 is None or not self.tool_texts:
@@ -326,8 +359,9 @@ class HybridToolSearcher:
         
         # 0. Check Cache
         cache_key = f"{query_stripped}:{top_k}"
-        if cache_key in self._search_cache:
-            return self._search_cache[cache_key]
+        cached_res = self._get_from_cache(cache_key)
+        if cached_res:
+            return cached_res
 
         # 1. Fast Path: Exact name match short-circuit
         for i, tool in enumerate(self.tools):
@@ -338,8 +372,9 @@ class HybridToolSearcher:
                     'tool_schema': tool,
                     'relevance_score': 1.0
                 }]
-                self._search_cache[cache_key] = res
+                self._save_to_cache(cache_key, res)
                 return res
+
 
         from concurrent.futures import ThreadPoolExecutor
         
@@ -391,13 +426,6 @@ class HybridToolSearcher:
                 'relevance_score': rerank_item['relevance_score']
             })
         
-        # Manage cache size
-        if len(self._search_cache) >= self._max_cache_size:
-            # Remove oldest item (FIFO)
-            try:
-                self._search_cache.pop(next(iter(self._search_cache)))
-            except (StopIteration, KeyError):
-                pass
-        self._search_cache[cache_key] = final_results
+        self._save_to_cache(cache_key, final_results)
         
         return final_results
