@@ -8,6 +8,7 @@ import hashlib
 import secrets
 from pathlib import Path
 from typing import Optional, Dict, Tuple
+import urllib.parse
 
 class AuthManager:
     """Manages OAuth tokens for MCP servers indexed by Ansam"""
@@ -114,13 +115,12 @@ class AuthManager:
         
         if not auth_endpoint:
             return None
-            
         params = {
             "response_type": "code",
             "client_id": auth_config.get("client_id"),
             "redirect_uri": redirect_uri,
             "scope": " ".join(auth_config.get("scopes_supported", [])),
-            "state": server_name # Using state to track which server we're authenticating
+            "state": server_name,  # Using state to track which server we're authenticating
         }
 
         # Include PKCE parameters when provided
@@ -128,14 +128,10 @@ class AuthManager:
             params["code_challenge"] = code_challenge
         if code_challenge_method:
             params["code_challenge_method"] = code_challenge_method
-        
-        # Simple URL builder (basic escaping)
-        parts = []
-        for k, v in params.items():
-            if v is None:
-                continue
-            parts.append(f"{k}={v}")
-        query = "&".join(parts)
+
+        # Remove None values and urlencode safely
+        safe_params = {k: v for k, v in params.items() if v is not None}
+        query = urllib.parse.urlencode(safe_params, doseq=True)
         return f"{auth_endpoint}?{query}"
 
     async def exchange_code(self, server_name: str, server_config: Dict, code: str, redirect_uri: str, code_verifier: Optional[str] = None) -> Optional[str]:
