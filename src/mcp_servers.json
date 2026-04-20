@@ -14,6 +14,7 @@
         "--token-path",
         "/mnt/0BF70EDD0BF70EDD/gmail-mcp/token.json"
       ],
+      "target": "/mnt/0BF70EDD0BF70EDD/gmail-mcp/src/gmail/server.py --creds-file-path /mnt/0BF70EDD0BF70EDD/gmail-mcp/credentials.json --token-path /mnt/0BF70EDD0BF70EDD/gmail-mcp/token.json",
       "tools": [
         {
           "name": "send-email",
@@ -34,6 +35,28 @@
               "description": "Email content text",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "recipient_id": {
+                "type": "string",
+                "description": "Recipient email address"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject"
+              },
+              "message": {
+                "type": "string",
+                "description": "Email content text"
+              }
+            },
+            "required": [
+              "recipient_id",
+              "subject",
+              "message"
+            ]
           }
         },
         {
@@ -45,12 +68,29 @@
               "description": "Email ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
           }
         },
         {
           "name": "get-unread-emails",
           "description": "Retrieve unread emails",
-          "parameters": {}
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
         },
         {
           "name": "read-email",
@@ -61,6 +101,18 @@
               "description": "Email ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
           }
         },
         {
@@ -72,6 +124,18 @@
               "description": "Email ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
           }
         },
         {
@@ -83,6 +147,18 @@
               "description": "Email ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
           }
         },
         {
@@ -104,17 +180,49 @@
               "description": "Email content text",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "recipient_id": {
+                "type": "string",
+                "description": "Recipient email address"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject"
+              },
+              "message": {
+                "type": "string",
+                "description": "Email content text"
+              }
+            },
+            "required": [
+              "recipient_id",
+              "subject",
+              "message"
+            ]
           }
         },
         {
           "name": "list-drafts",
           "description": "Lists all draft emails",
-          "parameters": {}
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
         },
         {
           "name": "list-labels",
           "description": "Lists all labels in the user's mailbox",
-          "parameters": {}
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
         },
         {
           "name": "create-label",
@@ -125,6 +233,18 @@
               "description": "Label name",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Label name"
+              }
+            },
+            "required": [
+              "name"
+            ]
           }
         },
         {
@@ -141,6 +261,23 @@
               "description": "Label ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              },
+              "label_id": {
+                "type": "string",
+                "description": "Label ID"
+              }
+            },
+            "required": [
+              "email_id",
+              "label_id"
+            ]
           }
         },
         {
@@ -157,6 +294,23 @@
               "description": "Label ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              },
+              "label_id": {
+                "type": "string",
+                "description": "Label ID"
+              }
+            },
+            "required": [
+              "email_id",
+              "label_id"
+            ]
           }
         },
         {
@@ -173,6 +327,23 @@
               "description": "New name for the label",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "label_id": {
+                "type": "string",
+                "description": "Label ID to rename"
+              },
+              "new_name": {
+                "type": "string",
+                "description": "New name for the label"
+              }
+            },
+            "required": [
+              "label_id",
+              "new_name"
+            ]
           }
         },
         {
@@ -184,6 +355,18 @@
               "description": "Label ID to delete",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "label_id": {
+                "type": "string",
+                "description": "Label ID to delete"
+              }
+            },
+            "required": [
+              "label_id"
+            ]
           }
         },
         {
@@ -195,12 +378,29 @@
               "description": "Label ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "label_id": {
+                "type": "string",
+                "description": "Label ID"
+              }
+            },
+            "required": [
+              "label_id"
+            ]
           }
         },
         {
           "name": "list-filters",
           "description": "Lists all email filters in the user's mailbox",
-          "parameters": {}
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
         },
         {
           "name": "get-filter",
@@ -211,6 +411,18 @@
               "description": "Filter ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filter_id": {
+                "type": "string",
+                "description": "Filter ID"
+              }
+            },
+            "required": [
+              "filter_id"
+            ]
           }
         },
         {
@@ -272,6 +484,61 @@
               "description": "Email address to forward matching emails to",
               "required": false
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "from_email": {
+                "type": "string",
+                "description": "Filter emails from this sender"
+              },
+              "to_email": {
+                "type": "string",
+                "description": "Filter emails to this recipient"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Filter emails with this subject"
+              },
+              "query": {
+                "type": "string",
+                "description": "Filter emails matching this query"
+              },
+              "has_attachment": {
+                "type": "boolean",
+                "description": "Filter emails with attachments"
+              },
+              "exclude_chats": {
+                "type": "boolean",
+                "description": "Exclude chats from filter"
+              },
+              "size_comparison": {
+                "type": "string",
+                "description": "Size comparison ('larger' or 'smaller')"
+              },
+              "size": {
+                "type": "integer",
+                "description": "Size in bytes for comparison"
+              },
+              "add_label_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Labels to add to matching emails"
+              },
+              "remove_label_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Labels to remove from matching emails"
+              },
+              "forward_to": {
+                "type": "string",
+                "description": "Email address to forward matching emails to"
+              }
+            }
           }
         },
         {
@@ -283,6 +550,18 @@
               "description": "Filter ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filter_id": {
+                "type": "string",
+                "description": "Filter ID"
+              }
+            },
+            "required": [
+              "filter_id"
+            ]
           }
         },
         {
@@ -299,6 +578,22 @@
               "description": "Maximum number of results to return",
               "required": false
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Gmail search query"
+              },
+              "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return"
+              }
+            },
+            "required": [
+              "query"
+            ]
           }
         },
         {
@@ -310,6 +605,18 @@
               "description": "Folder name",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Folder name"
+              }
+            },
+            "required": [
+              "name"
+            ]
           }
         },
         {
@@ -326,12 +633,34 @@
               "description": "Folder ID",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              },
+              "folder_id": {
+                "type": "string",
+                "description": "Folder ID"
+              }
+            },
+            "required": [
+              "email_id",
+              "folder_id"
+            ]
           }
         },
         {
           "name": "list-folders",
           "description": "Lists all user-created folders",
-          "parameters": {}
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
         },
         {
           "name": "archive-email",
@@ -342,6 +671,18 @@
               "description": "Email ID to archive",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID to archive"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
           }
         },
         {
@@ -358,6 +699,22 @@
               "description": "Maximum number of emails to archive (default: 100)",
               "required": false
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Gmail search query to find emails to archive"
+              },
+              "max_emails": {
+                "type": "integer",
+                "description": "Maximum number of emails to archive (default: 100)"
+              }
+            },
+            "required": [
+              "query"
+            ]
           }
         },
         {
@@ -369,6 +726,16 @@
               "description": "Maximum number of results to return",
               "required": false
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return"
+              }
+            },
+            "required": []
           }
         },
         {
@@ -380,42 +747,21 @@
               "description": "Email ID to restore to inbox",
               "required": true
             }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID to restore to inbox"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
           }
         }
       ]
-    },
-    {
-      "name": "figma-mcp",
-      "transport": "http",
-      "url": "https://mcp.figma.com/mcp",
-      "auth": {
-        "issuer": "https://api.figma.com",
-        "client_id": "YOUR_CLIENT_ID",
-        "client_secret": "YOUR_CLIENT_SECRET",
-        "authorization_endpoint": "https://www.figma.com/oauth/mcp",
-        "token_endpoint": "https://api.figma.com/v1/oauth/token",
-        "grant_types_supported": [
-          "authorization_code",
-          "refresh_token",
-          "urn:ietf:params:oauth:grant-type:jwt-bearer"
-        ],
-        "response_types_supported": [
-          "code"
-        ],
-        "registration_endpoint": "https://api.figma.com/v1/oauth/mcp/register",
-        "code_challenge_methods_supported": [
-          "S256"
-        ],
-        "token_endpoint_auth_methods_supported": [
-          "client_secret_basic",
-          "client_secret_post"
-        ],
-        "scopes_supported": [
-          "mcp:connect"
-        ],
-        "require_state_parameter": true
-      },
-      "tools": []
     }
   ]
 }

@@ -1,704 +1,767 @@
-[
-  {
-    "name": "send-email",
-    "title": null,
-    "description": "Sends email to recipient. \n                Do not use if user only asked to draft email. \n                Drafts must be approved before sending.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "recipient_id": {
-          "type": "string",
-          "description": "Recipient email address"
-        },
-        "subject": {
-          "type": "string",
-          "description": "Email subject"
-        },
-        "message": {
-          "type": "string",
-          "description": "Email content text"
-        }
-      },
-      "required": [
-        "recipient_id",
-        "subject",
-        "message"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "trash-email",
-    "title": null,
-    "description": "Moves email to trash. \n                Confirm before moving email to trash.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID"
-        }
-      },
-      "required": [
-        "email_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "get-unread-emails",
-    "title": null,
-    "description": "Retrieve unread emails",
-    "inputSchema": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "read-email",
-    "title": null,
-    "description": "Retrieves given email content",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID"
-        }
-      },
-      "required": [
-        "email_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "mark-email-as-read",
-    "title": null,
-    "description": "Marks given email as read",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID"
-        }
-      },
-      "required": [
-        "email_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "open-email",
-    "title": null,
-    "description": "Open email in browser",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID"
-        }
-      },
-      "required": [
-        "email_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "create-draft",
-    "title": null,
-    "description": "Creates a draft email without sending it",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "recipient_id": {
-          "type": "string",
-          "description": "Recipient email address"
-        },
-        "subject": {
-          "type": "string",
-          "description": "Email subject"
-        },
-        "message": {
-          "type": "string",
-          "description": "Email content text"
-        }
-      },
-      "required": [
-        "recipient_id",
-        "subject",
-        "message"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "list-drafts",
-    "title": null,
-    "description": "Lists all draft emails",
-    "inputSchema": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "list-labels",
-    "title": null,
-    "description": "Lists all labels in the user's mailbox",
-    "inputSchema": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "create-label",
-    "title": null,
-    "description": "Creates a new label",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Label name"
-        }
-      },
-      "required": [
-        "name"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "apply-label",
-    "title": null,
-    "description": "Applies a label to an email",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID"
-        },
-        "label_id": {
-          "type": "string",
-          "description": "Label ID"
-        }
-      },
-      "required": [
-        "email_id",
-        "label_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "remove-label",
-    "title": null,
-    "description": "Removes a label from an email",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID"
-        },
-        "label_id": {
-          "type": "string",
-          "description": "Label ID"
-        }
-      },
-      "required": [
-        "email_id",
-        "label_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "rename-label",
-    "title": null,
-    "description": "Renames an existing label",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "label_id": {
-          "type": "string",
-          "description": "Label ID to rename"
-        },
-        "new_name": {
-          "type": "string",
-          "description": "New name for the label"
-        }
-      },
-      "required": [
-        "label_id",
-        "new_name"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "delete-label",
-    "title": null,
-    "description": "Permanently deletes a label",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "label_id": {
-          "type": "string",
-          "description": "Label ID to delete"
-        }
-      },
-      "required": [
-        "label_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "search-by-label",
-    "title": null,
-    "description": "Searches for emails with a specific label",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "label_id": {
-          "type": "string",
-          "description": "Label ID"
-        }
-      },
-      "required": [
-        "label_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "list-filters",
-    "title": null,
-    "description": "Lists all email filters in the user's mailbox",
-    "inputSchema": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "get-filter",
-    "title": null,
-    "description": "Gets details of a specific filter",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "filter_id": {
-          "type": "string",
-          "description": "Filter ID"
-        }
-      },
-      "required": [
-        "filter_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "create-filter",
-    "title": null,
-    "description": "Creates a new email filter",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "from_email": {
-          "type": "string",
-          "description": "Filter emails from this sender"
-        },
-        "to_email": {
-          "type": "string",
-          "description": "Filter emails to this recipient"
-        },
-        "subject": {
-          "type": "string",
-          "description": "Filter emails with this subject"
-        },
-        "query": {
-          "type": "string",
-          "description": "Filter emails matching this query"
-        },
-        "has_attachment": {
-          "type": "boolean",
-          "description": "Filter emails with attachments"
-        },
-        "exclude_chats": {
-          "type": "boolean",
-          "description": "Exclude chats from filter"
-        },
-        "size_comparison": {
-          "type": "string",
-          "description": "Size comparison ('larger' or 'smaller')"
-        },
-        "size": {
-          "type": "integer",
-          "description": "Size in bytes for comparison"
-        },
-        "add_label_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
+{
+  "servers": [
+    {
+      "name": "gmail-mcp",
+      "transport": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/src/gmail",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/src/gmail/server.py",
+        "--creds-file-path",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/credentials.json",
+        "--token-path",
+        "/mnt/0BF70EDD0BF70EDD/gmail-mcp/token.json"
+      ],
+      "target": "/mnt/0BF70EDD0BF70EDD/gmail-mcp/src/gmail/server.py",
+      "tools": [
+        {
+          "name": "send-email",
+          "description": "Sends email to recipient. \n                Do not use if user only asked to draft email. \n                Drafts must be approved before sending.",
+          "parameters": {
+            "recipient_id": {
+              "type": "string",
+              "description": "Recipient email address",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "description": "Email subject",
+              "required": true
+            },
+            "message": {
+              "type": "string",
+              "description": "Email content text",
+              "required": true
+            }
           },
-          "description": "Labels to add to matching emails"
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "recipient_id": {
+                "type": "string",
+                "description": "Recipient email address"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject"
+              },
+              "message": {
+                "type": "string",
+                "description": "Email content text"
+              }
+            },
+            "required": [
+              "recipient_id",
+              "subject",
+              "message"
+            ]
+          }
         },
-        "remove_label_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
+        {
+          "name": "trash-email",
+          "description": "Moves email to trash. \n                Confirm before moving email to trash.",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
           },
-          "description": "Labels to remove from matching emails"
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
+          }
         },
-        "forward_to": {
-          "type": "string",
-          "description": "Email address to forward matching emails to"
-        }
-      }
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "delete-filter",
-    "title": null,
-    "description": "Deletes a specific filter",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "filter_id": {
-          "type": "string",
-          "description": "Filter ID"
-        }
-      },
-      "required": [
-        "filter_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "search-emails",
-    "title": null,
-    "description": "Searches for emails using Gmail's search syntax",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "query": {
-          "type": "string",
-          "description": "Gmail search query"
+        {
+          "name": "get-unread-emails",
+          "description": "Retrieve unread emails",
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
         },
-        "max_results": {
-          "type": "integer",
-          "description": "Maximum number of results to return"
-        }
-      },
-      "required": [
-        "query"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "create-folder",
-    "title": null,
-    "description": "Creates a new folder",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Folder name"
-        }
-      },
-      "required": [
-        "name"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "move-to-folder",
-    "title": null,
-    "description": "Moves an email to a folder",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID"
+        {
+          "name": "read-email",
+          "description": "Retrieves given email content",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
+          }
         },
-        "folder_id": {
-          "type": "string",
-          "description": "Folder ID"
-        }
-      },
-      "required": [
-        "email_id",
-        "folder_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "list-folders",
-    "title": null,
-    "description": "Lists all user-created folders",
-    "inputSchema": {
-      "type": "object",
-      "properties": {},
-      "required": []
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "archive-email",
-    "title": null,
-    "description": "Archives an email (removes from inbox without deleting)",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID to archive"
-        }
-      },
-      "required": [
-        "email_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "batch-archive",
-    "title": null,
-    "description": "Archives multiple emails matching a search query",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "query": {
-          "type": "string",
-          "description": "Gmail search query to find emails to archive"
+        {
+          "name": "mark-email-as-read",
+          "description": "Marks given email as read",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
+          }
         },
-        "max_emails": {
-          "type": "integer",
-          "description": "Maximum number of emails to archive (default: 100)"
+        {
+          "name": "open-email",
+          "description": "Open email in browser",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
+          }
+        },
+        {
+          "name": "create-draft",
+          "description": "Creates a draft email without sending it",
+          "parameters": {
+            "recipient_id": {
+              "type": "string",
+              "description": "Recipient email address",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "description": "Email subject",
+              "required": true
+            },
+            "message": {
+              "type": "string",
+              "description": "Email content text",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "recipient_id": {
+                "type": "string",
+                "description": "Recipient email address"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject"
+              },
+              "message": {
+                "type": "string",
+                "description": "Email content text"
+              }
+            },
+            "required": [
+              "recipient_id",
+              "subject",
+              "message"
+            ]
+          }
+        },
+        {
+          "name": "list-drafts",
+          "description": "Lists all draft emails",
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        },
+        {
+          "name": "list-labels",
+          "description": "Lists all labels in the user's mailbox",
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        },
+        {
+          "name": "create-label",
+          "description": "Creates a new label",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "Label name",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Label name"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        {
+          "name": "apply-label",
+          "description": "Applies a label to an email",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            },
+            "label_id": {
+              "type": "string",
+              "description": "Label ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              },
+              "label_id": {
+                "type": "string",
+                "description": "Label ID"
+              }
+            },
+            "required": [
+              "email_id",
+              "label_id"
+            ]
+          }
+        },
+        {
+          "name": "remove-label",
+          "description": "Removes a label from an email",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            },
+            "label_id": {
+              "type": "string",
+              "description": "Label ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              },
+              "label_id": {
+                "type": "string",
+                "description": "Label ID"
+              }
+            },
+            "required": [
+              "email_id",
+              "label_id"
+            ]
+          }
+        },
+        {
+          "name": "rename-label",
+          "description": "Renames an existing label",
+          "parameters": {
+            "label_id": {
+              "type": "string",
+              "description": "Label ID to rename",
+              "required": true
+            },
+            "new_name": {
+              "type": "string",
+              "description": "New name for the label",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "label_id": {
+                "type": "string",
+                "description": "Label ID to rename"
+              },
+              "new_name": {
+                "type": "string",
+                "description": "New name for the label"
+              }
+            },
+            "required": [
+              "label_id",
+              "new_name"
+            ]
+          }
+        },
+        {
+          "name": "delete-label",
+          "description": "Permanently deletes a label",
+          "parameters": {
+            "label_id": {
+              "type": "string",
+              "description": "Label ID to delete",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "label_id": {
+                "type": "string",
+                "description": "Label ID to delete"
+              }
+            },
+            "required": [
+              "label_id"
+            ]
+          }
+        },
+        {
+          "name": "search-by-label",
+          "description": "Searches for emails with a specific label",
+          "parameters": {
+            "label_id": {
+              "type": "string",
+              "description": "Label ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "label_id": {
+                "type": "string",
+                "description": "Label ID"
+              }
+            },
+            "required": [
+              "label_id"
+            ]
+          }
+        },
+        {
+          "name": "list-filters",
+          "description": "Lists all email filters in the user's mailbox",
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        },
+        {
+          "name": "get-filter",
+          "description": "Gets details of a specific filter",
+          "parameters": {
+            "filter_id": {
+              "type": "string",
+              "description": "Filter ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filter_id": {
+                "type": "string",
+                "description": "Filter ID"
+              }
+            },
+            "required": [
+              "filter_id"
+            ]
+          }
+        },
+        {
+          "name": "create-filter",
+          "description": "Creates a new email filter",
+          "parameters": {
+            "from_email": {
+              "type": "string",
+              "description": "Filter emails from this sender",
+              "required": false
+            },
+            "to_email": {
+              "type": "string",
+              "description": "Filter emails to this recipient",
+              "required": false
+            },
+            "subject": {
+              "type": "string",
+              "description": "Filter emails with this subject",
+              "required": false
+            },
+            "query": {
+              "type": "string",
+              "description": "Filter emails matching this query",
+              "required": false
+            },
+            "has_attachment": {
+              "type": "boolean",
+              "description": "Filter emails with attachments",
+              "required": false
+            },
+            "exclude_chats": {
+              "type": "boolean",
+              "description": "Exclude chats from filter",
+              "required": false
+            },
+            "size_comparison": {
+              "type": "string",
+              "description": "Size comparison ('larger' or 'smaller')",
+              "required": false
+            },
+            "size": {
+              "type": "integer",
+              "description": "Size in bytes for comparison",
+              "required": false
+            },
+            "add_label_ids": {
+              "type": "array",
+              "description": "Labels to add to matching emails",
+              "required": false
+            },
+            "remove_label_ids": {
+              "type": "array",
+              "description": "Labels to remove from matching emails",
+              "required": false
+            },
+            "forward_to": {
+              "type": "string",
+              "description": "Email address to forward matching emails to",
+              "required": false
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "from_email": {
+                "type": "string",
+                "description": "Filter emails from this sender"
+              },
+              "to_email": {
+                "type": "string",
+                "description": "Filter emails to this recipient"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Filter emails with this subject"
+              },
+              "query": {
+                "type": "string",
+                "description": "Filter emails matching this query"
+              },
+              "has_attachment": {
+                "type": "boolean",
+                "description": "Filter emails with attachments"
+              },
+              "exclude_chats": {
+                "type": "boolean",
+                "description": "Exclude chats from filter"
+              },
+              "size_comparison": {
+                "type": "string",
+                "description": "Size comparison ('larger' or 'smaller')"
+              },
+              "size": {
+                "type": "integer",
+                "description": "Size in bytes for comparison"
+              },
+              "add_label_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Labels to add to matching emails"
+              },
+              "remove_label_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Labels to remove from matching emails"
+              },
+              "forward_to": {
+                "type": "string",
+                "description": "Email address to forward matching emails to"
+              }
+            }
+          }
+        },
+        {
+          "name": "delete-filter",
+          "description": "Deletes a specific filter",
+          "parameters": {
+            "filter_id": {
+              "type": "string",
+              "description": "Filter ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "filter_id": {
+                "type": "string",
+                "description": "Filter ID"
+              }
+            },
+            "required": [
+              "filter_id"
+            ]
+          }
+        },
+        {
+          "name": "search-emails",
+          "description": "Searches for emails using Gmail's search syntax",
+          "parameters": {
+            "query": {
+              "type": "string",
+              "description": "Gmail search query",
+              "required": true
+            },
+            "max_results": {
+              "type": "integer",
+              "description": "Maximum number of results to return",
+              "required": false
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Gmail search query"
+              },
+              "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return"
+              }
+            },
+            "required": [
+              "query"
+            ]
+          }
+        },
+        {
+          "name": "create-folder",
+          "description": "Creates a new folder",
+          "parameters": {
+            "name": {
+              "type": "string",
+              "description": "Folder name",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Folder name"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        {
+          "name": "move-to-folder",
+          "description": "Moves an email to a folder",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID",
+              "required": true
+            },
+            "folder_id": {
+              "type": "string",
+              "description": "Folder ID",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID"
+              },
+              "folder_id": {
+                "type": "string",
+                "description": "Folder ID"
+              }
+            },
+            "required": [
+              "email_id",
+              "folder_id"
+            ]
+          }
+        },
+        {
+          "name": "list-folders",
+          "description": "Lists all user-created folders",
+          "parameters": {},
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        },
+        {
+          "name": "archive-email",
+          "description": "Archives an email (removes from inbox without deleting)",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID to archive",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID to archive"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
+          }
+        },
+        {
+          "name": "batch-archive",
+          "description": "Archives multiple emails matching a search query",
+          "parameters": {
+            "query": {
+              "type": "string",
+              "description": "Gmail search query to find emails to archive",
+              "required": true
+            },
+            "max_emails": {
+              "type": "integer",
+              "description": "Maximum number of emails to archive (default: 100)",
+              "required": false
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Gmail search query to find emails to archive"
+              },
+              "max_emails": {
+                "type": "integer",
+                "description": "Maximum number of emails to archive (default: 100)"
+              }
+            },
+            "required": [
+              "query"
+            ]
+          }
+        },
+        {
+          "name": "list-archived",
+          "description": "Lists archived emails (not in inbox)",
+          "parameters": {
+            "max_results": {
+              "type": "integer",
+              "description": "Maximum number of results to return",
+              "required": false
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return"
+              }
+            },
+            "required": []
+          }
+        },
+        {
+          "name": "restore-to-inbox",
+          "description": "Restores an archived email back to the inbox",
+          "parameters": {
+            "email_id": {
+              "type": "string",
+              "description": "Email ID to restore to inbox",
+              "required": true
+            }
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "description": "Email ID to restore to inbox"
+              }
+            },
+            "required": [
+              "email_id"
+            ]
+          }
         }
-      },
-      "required": [
-        "query"
       ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "list-archived",
-    "title": null,
-    "description": "Lists archived emails (not in inbox)",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "max_results": {
-          "type": "integer",
-          "description": "Maximum number of results to return"
-        }
-      },
-      "required": []
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  },
-  {
-    "name": "restore-to-inbox",
-    "title": null,
-    "description": "Restores an archived email back to the inbox",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "email_id": {
-          "type": "string",
-          "description": "Email ID to restore to inbox"
-        }
-      },
-      "required": [
-        "email_id"
-      ]
-    },
-    "outputSchema": null,
-    "icons": null,
-    "annotations": null,
-    "meta": null,
-    "execution": null,
-    "server_origin": "single_server",
-    "transport_used": "stdio"
-  }
-]
+    }
+  ]
+}

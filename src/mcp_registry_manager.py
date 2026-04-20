@@ -58,6 +58,7 @@ class MCPRegistryManager:
         tool_dict = tool.model_dump()
         tool_dict["server_origin"] = server_name
         tool_dict["transport_used"] = transport
+        
         return tool_dict
 
     def parse_tool_for_config(self, tool) -> Dict[str, Any]:
@@ -238,6 +239,21 @@ async def main():
                 if " " in a: san_args.extend(shlex.split(a))
                 else: san_args.append(a)
             cfg["args"] = san_args
+            # Record the full command (command + sanitized args) as the target.
+            cmd_tokens = []
+            if args.command:
+                try:
+                    cmd_tokens = shlex.split(args.command)
+                except Exception:
+                    cmd_tokens = [args.command]
+
+            full_tokens = cmd_tokens + san_args
+            if full_tokens:
+                try:
+                    cfg['target'] = shlex.join(full_tokens)
+                except AttributeError:
+                    # Fallback for Python versions without shlex.join
+                    cfg['target'] = ' '.join(full_tokens)
         else:
             cfg["url"] = args.url
             if headers: cfg["headers"] = headers

@@ -33,6 +33,7 @@ logging.basicConfig(
 
 # Module-level singleton for hybrid searcher and auth manager
 _shared_searcher: Optional[HybridToolSearcher] = None
+
 _auth_manager: Optional[AuthManager] = None
 
 def get_shared_searcher() -> HybridToolSearcher:
