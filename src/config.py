@@ -34,6 +34,17 @@ class Config:
     MAX_OPEN_CONNECTIONS = 32  # Keep only this many servers active at once
     WARMUP_LIMIT = 5          # Only pre-connect to the first 5 servers
     
+    # Rate Limiting
+    GLOBAL_RATE = 10.0         # Global requests per second
+    GLOBAL_CAPACITY = 20       # Global burst capacity
+    PER_SERVER_RATE = 2.0      # Per-server requests per second
+    PER_SERVER_CAPACITY = 5    # Per-server burst capacity
+    
+    # Circuit Breaker
+    CB_FAILURE_THRESHOLD = 5   # Failures before opening circuit
+    CB_RECOVERY_TIMEOUT = 30.0 # Seconds before moving to half-open
+    CB_HALF_OPEN_SUCCESS = 2   # Successes required to close circuit
+    
     # Device
     DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
     

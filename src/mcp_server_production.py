@@ -16,7 +16,9 @@ import argparse
 
 from auth_manager import AuthManager
 from hybrid_searcher import HybridToolSearcher
-
+from rate_limiter import RateLimiterManager
+from circuit_breaker import CircuitBreakerManager, CircuitOpenError
+from config import Config
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,18 @@ logger = logging.getLogger(__name__)
 # Module-level singleton for hybrid searcher and auth manager
 searcher: HybridToolSearcher = HybridToolSearcher()
 auth_manager: AuthManager = AuthManager()
+
+# Rate limiters
+global_rate_limiter = RateLimiterManager(rate=Config.GLOBAL_RATE, capacity=Config.GLOBAL_CAPACITY)
+server_rate_limiter = RateLimiterManager(rate=Config.PER_SERVER_RATE, capacity=Config.PER_SERVER_CAPACITY)
+
+# Circuit breaker manager
+cb_manager = CircuitBreakerManager(
+    failure_threshold=Config.CB_FAILURE_THRESHOLD,
+    recovery_timeout=Config.CB_RECOVERY_TIMEOUT,
+    half_open_success=Config.CB_HALF_OPEN_SUCCESS
+)
+
 tool_to_server_map = {}
 
 # Note: server configs are loaded asynchronously in `app_lifespan`
@@ -363,6 +377,9 @@ async def search_tools(
 ) -> str:   
     """Search for tools using hybrid retrieval."""
     try:
+        # Global Rate Limiting
+        if not await global_rate_limiter.try_acquire("global"):
+            return "Too many requests. Please try again later."
         
         await progress.set_total(4)  # 4 main steps
         await progress.set_message("Initializing search...")
@@ -483,18 +500,29 @@ async def call_tool(
     if server_name is None:
         return f"Tool '{tool_name}' is not registered to any server"
 
+    # Global Rate Limiting
+    if not await global_rate_limiter.try_acquire("global"):
+        return "Too many requests. Please try again later."
+
+    # Per-Server Rate Limiting
+    if not await server_rate_limiter.try_acquire(server_name):
+        return f"Too many requests for server '{server_name}'. Please try again later."
+
     ctx.info(f"Received request to call tool '{tool_name}' on server '{server_name}' with arguments: {arguments}")
 
-    proxy = await proxy_manager.get_proxy(server_name)
-
-    if not proxy:
-        return f"Server '{server_name}' not found or failed to connect"
+    async def _execute_tool_call():
+        proxy = await proxy_manager.get_proxy(server_name)
+        if not proxy:
+            raise Exception(f"Server '{server_name}' not found or failed to connect")
+        return await proxy.call_tool(tool_name, arguments)
     
     try:
-        # Call the tool on the proxy
-        result = await proxy.call_tool(tool_name, arguments)
+        # Call the tool with circuit breaker covering both connection and execution
+        result = await cb_manager.call(server_name, _execute_tool_call)
         return result
         
+    except CircuitOpenError as e:
+        return f"Circuit breaker is OPEN for server '{server_name}': {e}"
     except Exception as e:
         return f"Error calling {tool_name} on {server_name}: {e}"
 
