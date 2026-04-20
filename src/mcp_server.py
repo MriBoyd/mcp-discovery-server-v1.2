@@ -163,6 +163,8 @@ class MCPToolRegistry:
         self._active_connections: List[str] = [] # LRU list of server names
         # Track the warmup background task so it can be cancelled on shutdown
         self._warmup_task: Optional[asyncio.Task] = None
+        # Lock to protect concurrent access to the LRU active connections list
+        self._pool_lock: asyncio.Lock = asyncio.Lock()
         self.auth_manager = auth_manager
         self._load_config(config_path)
     
@@ -206,9 +208,9 @@ class MCPToolRegistry:
         conn = server_info["connection"]
         logging.info(f"Closing connection to server: {server_name}")
         await conn.stop()
-        
-        if server_name in self._active_connections:
-            self._active_connections.remove(server_name)
+        async with self._pool_lock:
+            if server_name in self._active_connections:
+                self._active_connections.remove(server_name)
 
     async def connect_to_server(self, server_name: str) -> ClientSession:
         """Connect to an MCP server with LRU pool management"""
@@ -218,20 +220,25 @@ class MCPToolRegistry:
         # If already connected, move to end of LRU (most recently used)
         client = await conn.start()
         if client:
-            if server_name in self._active_connections:
-                self._active_connections.remove(server_name)
-            self._active_connections.append(server_name)
+            async with self._pool_lock:
+                if server_name in self._active_connections:
+                    self._active_connections.remove(server_name)
+                self._active_connections.append(server_name)
             return conn.client
         
         # Manage pool size: if we hit the limit, close the oldest connection
-        while len(self._active_connections) >= Config.MAX_OPEN_CONNECTIONS:
-            oldest_server = self._active_connections.pop(0)
+        while True:
+            async with self._pool_lock:
+                if len(self._active_connections) < Config.MAX_OPEN_CONNECTIONS:
+                    break
+                oldest_server = self._active_connections.pop(0)
             await self._close_connection(oldest_server)
 
         client = await conn.start()
         # Small grace period for server to fully initialize its session
         await asyncio.sleep(1.0)
-        self._active_connections.append(server_name)
+        async with self._pool_lock:
+            self._active_connections.append(server_name)
         return client
 
     async def warmup(self):
@@ -271,10 +278,15 @@ class MCPToolRegistry:
                 # We don't call _close_connection here to allow it to retry on the first real call
                 
         logging.info(f"Warmup phase complete. {len(self._active_connections)} servers active.")
+        # read active count under lock to avoid race with concurrent connects
+        async with self._pool_lock:
+            active_count = len(self._active_connections)
+        logging.info(f"Warmup phase complete. {active_count} servers active.")
 
     async def cleanup(self):
         """Close all active server connections"""
-        active_copy = list(self._active_connections)
+        async with self._pool_lock:
+            active_copy = list(self._active_connections)
         for name in active_copy:
             await self._close_connection(name)
 
