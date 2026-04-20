@@ -235,8 +235,6 @@ class MCPToolRegistry:
             await self._close_connection(oldest_server)
 
         client = await conn.start()
-        # Small grace period for server to fully initialize its session
-        await asyncio.sleep(1.0)
         async with self._pool_lock:
             self._active_connections.append(server_name)
         return client
