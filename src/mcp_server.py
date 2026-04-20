@@ -134,6 +134,7 @@ class ServerConnection:
             await self._stop_event.wait()
             
         except Exception as e:
+            logging.exception(f"[{self.server_name}] connection failed")
             self.error = e
             self._connected_event.set()
         finally:
@@ -160,6 +161,8 @@ class MCPToolRegistry:
         self.servers: Dict[str, Dict] = {}  # server_name -> {config, tools, connection}
         self.tool_to_server: Dict[str, str] = {} # tool_name -> server_name
         self._active_connections: List[str] = [] # LRU list of server names
+        # Track the warmup background task so it can be cancelled on shutdown
+        self._warmup_task: Optional[asyncio.Task] = None
         self.auth_manager = auth_manager
         self._load_config(config_path)
     
@@ -345,15 +348,19 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     auth_manager = get_auth_manager()
     config_path = Path(__file__).parent / "mcp_servers.json"
     registry = MCPToolRegistry(config_path, auth_manager)
-    
-    # Warm up in background to avoid blocking server start
-    # but still get them ready as soon as possible
-    warmup_task = asyncio.create_task(registry.warmup())
-        
-    yield AppContext(searcher=searcher, registry=registry, auth_manager=auth_manager)
-    
-    # Cleanup
-    await registry.cleanup()
+    registry._warmup_task = asyncio.create_task(registry.warmup())
+
+    try:
+        yield AppContext(searcher=searcher, registry=registry, auth_manager=auth_manager)
+    finally:
+        # Cancel warmup task if it's still running to avoid asyncio task leaks
+        task = getattr(registry, "_warmup_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        # Cleanup connections
+        await registry.cleanup()
 
 
 # ============= Create MCP Server =============
