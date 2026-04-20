@@ -2,16 +2,17 @@ import asyncio
 import threading
 from collections import OrderedDict
 from typing import Dict, Optional, Any
-from fastmcp import FastMCP
 from fastmcp.server import create_proxy
+import json
 from fastmcp import FastMCP, Context
 from fastmcp.dependencies import Progress
+from fastmcp.exceptions import ToolError 
 from fastmcp.server.lifespan import lifespan
-import json
 from pathlib import Path
 import logging
 from fastmcp.client.transports.stdio import StdioTransport
 import sys
+import argparse
 
 from auth_manager import AuthManager
 from hybrid_searcher import HybridToolSearcher
@@ -27,34 +28,38 @@ searcher: HybridToolSearcher = HybridToolSearcher()
 auth_manager: AuthManager = AuthManager()
 tool_to_server_map = {}
 
-config_path = Path(__file__).parent / "mcp_servers.json"
-with open(config_path) as f:
-    data = json.load(f)
+# Note: server configs are loaded asynchronously in `app_lifespan`
 
-for server in data.get("servers", []):
-    server_name = server["name"]
-    for tool in server.get("tools", []):
-        tool_to_server_map[tool["name"]] = server_name
 
 
 class ConcurrentLRUCache:
-    """Thread-safe LRU cache for managing server connections"""
-    
+    """Async-safe LRU cache for managing server connections using asyncio.Lock.
+
+    Methods are async and must be awaited. The internal lock is created
+    lazily to avoid requiring a running event loop at import time.
+    """
+
     def __init__(self, capacity: int):
         self.capacity = capacity
         self.cache = OrderedDict()
-        self.lock = threading.Lock()
+        self._lock = None  # type: Optional[asyncio.Lock]
 
-    def get(self, key):
-        with self.lock:
+    async def _ensure_lock(self):
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+
+    async def get(self, key):
+        await self._ensure_lock()
+        async with self._lock:
             if key not in self.cache:
                 return None
             # Move to end to mark as most recently used
             self.cache.move_to_end(key)
             return self.cache[key]
 
-    def put(self, key, value):
-        with self.lock:
+    async def put(self, key, value):
+        await self._ensure_lock()
+        async with self._lock:
             if key in self.cache:
                 self.cache.move_to_end(key)
             self.cache[key] = value
@@ -65,19 +70,36 @@ class ConcurrentLRUCache:
                 return evicted_key, evicted_value
         return None, None
 
-    def remove(self, key):
-        with self.lock:
+    async def remove(self, key):
+        await self._ensure_lock()
+        async with self._lock:
             if key in self.cache:
                 del self.cache[key]
                 logger.debug(f"Removed server '{key}' from cache")
 
-    def size(self):
-        with self.lock:
+    async def size(self):
+        await self._ensure_lock()
+        async with self._lock:
             return len(self.cache)
 
-    def keys(self):
-        with self.lock:
+    async def keys(self):
+        await self._ensure_lock()
+        async with self._lock:
             return list(self.cache.keys())
+
+    async def popitem(self, last: bool = False):
+        """Async-safe popitem compatible with OrderedDict.popitem.
+
+        If last is False, pop the least-recently-used item (first item).
+        Returns a tuple (key, value).
+        """
+        await self._ensure_lock()
+        async with self._lock:
+            if not self.cache:
+                raise KeyError("popitem(): cache is empty")
+            key, value = self.cache.popitem(last=last)
+            logger.info(f"Evicted server '{key}' from cache via popitem()")
+            return key, value
 
 
 class DynamicProxyManager:
@@ -107,7 +129,7 @@ class DynamicProxyManager:
             name = server_config["name"]
             try:
                 proxy = await self._create_proxy(server_config)
-                self.cache.put(name, proxy)
+                await self.cache.put(name, proxy)
                 logger.info(f"✓ Default server '{name}' initialized")
             except Exception as e:
                 logger.error(f"✗ Failed to initialize default server '{name}': {e}")
@@ -123,7 +145,7 @@ class DynamicProxyManager:
         Implements lazy loading - only connects when first requested.
         """
         # Check cache first
-        cached = self.cache.get(server_name)
+        cached = await self.cache.get(server_name)
         if cached:
             logger.debug(f"Cache hit for '{server_name}'")
             return cached
@@ -131,7 +153,7 @@ class DynamicProxyManager:
         # Need to create new connection
         async with self._lock:
             # Double-check after acquiring lock (could have been created while waiting)
-            cached = self.cache.get(server_name)
+            cached = await self.cache.get(server_name)
             if cached:
                 return cached
             
@@ -142,13 +164,14 @@ class DynamicProxyManager:
             
             # Create new proxy
             config = self.server_configs[server_name]
-            logger.info(f"Creating new proxy for '{server_name}' (active: {self.cache.size()}/{self.max_connections})")
+            size = await self.cache.size()
+            logger.info(f"Creating new proxy for '{server_name}' (active: {size}/{self.max_connections})")
             
             try:
                 proxy = await self._create_proxy(config)
-                
+
                 # Put in cache - this may evict an old connection
-                evicted_key, evicted_proxy = self.cache.put(server_name, proxy)
+                evicted_key, evicted_proxy = await self.cache.put(server_name, proxy)
                 
                 # Cleanup evicted connection if any
                 if evicted_key:
@@ -238,18 +261,22 @@ class DynamicProxyManager:
     
     async def get_active_servers(self) -> list:
         """Get list of currently active server names"""
-        return self.cache.keys()
+        return await self.cache.keys()
     
     async def cleanup_all(self):
         """Cleanup all active connections"""
-        logger.info(f"Cleaning up all {self.cache.size()} active connections...")
-        for server_name in self.cache.keys():
-            proxy = self.cache.get(server_name)
+        total = await self.cache.size()
+        logger.info(f"Cleaning up all {total} active connections...")
+
+        keys = await self.cache.keys()
+        for server_name in keys:
+            proxy = await self.cache.get(server_name)
             if proxy:
                 await self._cleanup_proxy(server_name, proxy)
+
         # Clear cache
-        while self.cache.size() > 0:
-            self.cache.popitem(last=False)
+        while await self.cache.size() > 0:
+            await self.cache.popitem(last=False)
 
 
 # ============= Integration with FastMCP =============
@@ -258,8 +285,6 @@ class DynamicProxyManager:
 def load_all_server_configs() -> list:
     """Load your 1000 server configurations from JSON/database"""
     # Example: load from JSON file
-    import json
-    from pathlib import Path
     
     config_path = Path(__file__).parent / "mcp_servers.json"
     with open(config_path) as f:
@@ -269,24 +294,11 @@ def load_all_server_configs() -> list:
     return data.get("servers", [])
 
 
-# Create the dynamic manager
-server_configs = load_all_server_configs()
-
-# Define your hot tier (servers that should always stay connected)
-hot_tier_servers = [
-    cfg for cfg in server_configs 
-    if cfg.get("priority") == "high"  # Mark high-priority servers in your config
-][:10]  # Keep top 10 always connected
-
-# Initialize the manager
+# Create the dynamic manager (configs will be loaded asynchronously in app_lifespan)
 proxy_manager = DynamicProxyManager(
-    max_connections=50,  # Keep 50 servers active at once
-    default_servers=hot_tier_servers  # Pre-initialize these
+    max_connections=50,
+    default_servers=None
 )
-
-# Register all 1000 servers (configs only, no connections yet)
-for config in server_configs:
-    proxy_manager.register_server(config)
 
 
 # ============= FastMCP Server Setup =============
@@ -294,6 +306,25 @@ for config in server_configs:
 @lifespan
 async def app_lifespan(server: FastMCP):
     """Application lifespan with background maintenance"""    
+    # Load server configurations off the event loop to avoid blocking
+    try:
+        server_configs = await asyncio.to_thread(load_all_server_configs)
+    except Exception as e:
+        logger.error(f"Failed to load server configs: {e}")
+        server_configs = []
+
+    # Build tool->server map and register server configs
+    for cfg in server_configs:
+        name = cfg.get("name")
+        for tool in cfg.get("tools", []):
+            tool_to_server_map[tool.get("name")] = name
+        proxy_manager.register_server(cfg)
+
+    # Initialize hot-tier servers (run synchronously here to ensure availability)
+    hot_tier_servers = [c for c in server_configs if c.get("priority") == "high"][:10]
+    if hot_tier_servers:
+        await proxy_manager._initialize_default_servers(hot_tier_servers)
+
     # Start background task to log cache stats periodically
     async def log_stats():
         while True:
@@ -348,17 +379,21 @@ async def search_tools(
         authenticated_results = []
         for res in results:
             server_name = get_server_by_tool(res['tool_name'])
-            if server_name:
-                server_config = proxy_manager.server_configs.get(server_name, {})
-                if "auth" in server_config:
-                    # Check if we have a token or can refresh
-                    token = auth_manager.get_token(server_name)
-                    if not token:
-                        token = await auth_manager.refresh_token(server_name, server_config)
-                    
-                    if not token:
-                        # Skip this tool, user hasn't authenticated yet
-                        continue
+            if server_name is None:
+                logger.debug(f"No server mapping for tool '{res.get('tool_name')}', skipping result")
+                continue
+
+            server_config = proxy_manager.server_configs.get(server_name, {})
+            if "auth" in server_config:
+                # Check if we have a token or can refresh
+                token = auth_manager.get_token(server_name)
+                if not token:
+                    token = await auth_manager.refresh_token(server_name, server_config)
+
+                if not token:
+                    # Skip this tool, user hasn't authenticated yet
+                    continue
+
             authenticated_results.append(res)
         
         results = authenticated_results
@@ -429,7 +464,7 @@ def get_server_by_tool(tool_name: str) -> str:
     """
     Retrieves the server name in O(1) time using the pre-processed map.
     """
-    return tool_to_server_map.get(tool_name, "Tool not found")
+    return tool_to_server_map.get(tool_name)
 
 
 @mcp.tool(task=True)
@@ -443,14 +478,14 @@ async def call_tool(
     Server is loaded on-demand and cached via LRU.
     """
     
-    # Get or create proxy for this server
+    # Get server mapping
     server_name = get_server_by_tool(tool_name)
-    
+    if server_name is None:
+        return f"Tool '{tool_name}' is not registered to any server"
+
     ctx.info(f"Received request to call tool '{tool_name}' on server '{server_name}' with arguments: {arguments}")
 
     proxy = await proxy_manager.get_proxy(server_name)
-    
-    # return f"Calling '{tool_name}' on server '{server_name}' with arguments: {arguments}"
 
     if not proxy:
         return f"Server '{server_name}' not found or failed to connect"
@@ -465,13 +500,24 @@ async def call_tool(
 
 
 
-if __name__ == "__main__":    
-    match sys.argv[1]:
-        case "--sse":
-            mcp.run(transport="sse", host="0.0.0.0", port=8000)
-            logger.info("Starting MCP server with HTTP transport (SSE)")
-        case "--http":
-            mcp.run(transport="http", host="0.0.0.0", port=8000)
-        case _:
-            logger.info("Starting MCP server with stdio transport")
-            mcp.run(transport="stdio")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run the MCP server")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--sse", action="store_true", help="Run with SSE transport")
+    group.add_argument("--http", action="store_true", help="Run with HTTP transport")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+    parser.add_argument("--transport", choices=["stdio", "sse", "http"],
+                        help="Explicit transport to use (overrides flags)")
+
+    args = parser.parse_args()
+
+    if args.transport == "sse" or args.sse:
+        mcp.run(transport="sse", host=args.host, port=args.port)
+        logger.info("Starting MCP server with SSE transport")
+    elif args.transport == "http" or args.http:
+        mcp.run(transport="http", host=args.host, port=args.port)
+        logger.info("Starting MCP server with HTTP transport")
+    else:
+        logger.info("Starting MCP server with stdio transport")
+        mcp.run(transport="stdio")

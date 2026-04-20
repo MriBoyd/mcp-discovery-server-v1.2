@@ -1,431 +1,360 @@
-# mcp_server.py
 import asyncio
-import logging
+import threading
+from collections import OrderedDict
+from typing import Dict, Optional, Any
+from fastmcp import FastMCP
+from fastmcp.server import create_proxy
+from fastmcp import FastMCP, Context
+from fastmcp.dependencies import Progress
+from fastmcp.server.lifespan import lifespan
 import json
 from pathlib import Path
-from contextlib import AsyncExitStack
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
+import logging
+from fastmcp.client.transports.stdio import StdioTransport
 import sys
-import contextlib
-from mcp.server.fastmcp import FastMCP, Context
-from mcp.server.session import ServerSession
-from mcp.server.fastmcp.exceptions import ToolError
+
+from auth_manager import AuthManager
 from hybrid_searcher import HybridToolSearcher
-import traceback
-import warnings
-import types
 
-# MCP Client imports
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client
 
-from src.config import Config
-from src.auth_manager import AuthManager
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    stream=sys.stderr
-)
+logger = logging.getLogger(__name__)
+
+
 
 # Module-level singleton for hybrid searcher and auth manager
-_shared_searcher: Optional[HybridToolSearcher] = None
+searcher: HybridToolSearcher = HybridToolSearcher()
+auth_manager: AuthManager = AuthManager()
+tool_to_server_map = {}
 
-_auth_manager: Optional[AuthManager] = None
+config_path = Path(__file__).parent / "mcp_servers.json"
+with open(config_path) as f:
+    data = json.load(f)
 
-def get_shared_searcher() -> HybridToolSearcher:
-    """Lazily initialize and return a single shared HybridToolSearcher instance."""
-    global _shared_searcher
-    if _shared_searcher is None:
-        with contextlib.redirect_stdout(sys.stderr):
-            _shared_searcher = HybridToolSearcher()
-            _shared_searcher.is_indexed = True
-    return _shared_searcher
-
-def get_auth_manager() -> AuthManager:
-    """Lazily initialize and return a single shared AuthManager instance."""
-    global _auth_manager
-    if _auth_manager is None:
-        _auth_manager = AuthManager()
-    return _auth_manager
+for server in data.get("servers", []):
+    server_name = server["name"]
+    for tool in server.get("tools", []):
+        tool_to_server_map[tool["name"]] = server_name
 
 
-class ServerConnection:
-    """Manages the lifecycle of a single MCP server connection in its own dedicated task."""
-    def __init__(self, server_name: str, config: Dict, auth_manager: AuthManager):
-        self.server_name = server_name
-        self.config = config
-        self.auth_manager = auth_manager
-        self.client: Optional[ClientSession] = None
-        self.error: Optional[Exception] = None
-        self._connected_event = asyncio.Event()
-        self._stop_event = asyncio.Event()
-        self._task: Optional[asyncio.Task] = None
-        self._stack: Optional[AsyncExitStack] = None
+class ConcurrentLRUCache:
+    """Thread-safe LRU cache for managing server connections"""
+    
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.cache = OrderedDict()
+        self.lock = threading.Lock()
+
+    def get(self, key):
+        with self.lock:
+            if key not in self.cache:
+                return None
+            # Move to end to mark as most recently used
+            self.cache.move_to_end(key)
+            return self.cache[key]
+
+    def put(self, key, value):
+        with self.lock:
+            if key in self.cache:
+                self.cache.move_to_end(key)
+            self.cache[key] = value
+            if len(self.cache) > self.capacity:
+                # Remove the LRU item (first item)
+                evicted_key, evicted_value = self.cache.popitem(last=False)
+                logger.info(f"Evicted server '{evicted_key}' from cache (capacity={self.capacity})")
+                return evicted_key, evicted_value
+        return None, None
+
+    def remove(self, key):
+        with self.lock:
+            if key in self.cache:
+                del self.cache[key]
+                logger.debug(f"Removed server '{key}' from cache")
+
+    def size(self):
+        with self.lock:
+            return len(self.cache)
+
+    def keys(self):
+        with self.lock:
+            return list(self.cache.keys())
+
+
+class DynamicProxyManager:
+    """Manages MCP server proxies with LRU caching and lazy loading"""
+    
+    def __init__(self, max_connections: int = 50, default_servers: list = None):
+        """
+        Args:
+            max_connections: Maximum number of concurrent server connections
+            default_servers: List of server configs to pre-initialize (hot tier)
+        """
+        self.max_connections = max_connections
+        self.cache = ConcurrentLRUCache(max_connections)
+        self.server_configs: Dict[str, dict] = {}
+        self._cleanup_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
-
-    async def start(self):
-        """Start the connection task and wait for it to be ready."""
+        
+        # Initialize default servers (hot tier)
+        if default_servers:
+            asyncio.create_task(self._initialize_default_servers(default_servers))
+    
+    async def _initialize_default_servers(self, default_servers: list):
+        """Pre-initialize critical servers (hot tier)"""
+        logger.info(f"Pre-initializing {len(default_servers)} default servers...")
+        
+        for server_config in default_servers:
+            name = server_config["name"]
+            try:
+                proxy = await self._create_proxy(server_config)
+                self.cache.put(name, proxy)
+                logger.info(f"✓ Default server '{name}' initialized")
+            except Exception as e:
+                logger.error(f"✗ Failed to initialize default server '{name}': {e}")
+    
+    def register_server(self, config: dict):
+        """Register a server configuration (doesn't connect yet)"""
+        self.server_configs[config["name"]] = config
+        logger.debug(f"Registered server '{config['name']}' (total: {len(self.server_configs)})")
+    
+    async def get_proxy(self, server_name: str) -> Optional[FastMCP]:
+        """
+        Get or create a proxy for the server.
+        Implements lazy loading - only connects when first requested.
+        """
+        # Check cache first
+        cached = self.cache.get(server_name)
+        if cached:
+            logger.debug(f"Cache hit for '{server_name}'")
+            return cached
+        
+        # Need to create new connection
         async with self._lock:
-            if self._task and not self._task.done():
-                await self._connected_event.wait()
-                if self.error:
-                    raise self.error
-                return self.client
-
-            self._connected_event.clear()
-            self._stop_event.clear()
-            self.error = None
-            self._task = asyncio.create_task(self._run())
+            # Double-check after acquiring lock (could have been created while waiting)
+            cached = self.cache.get(server_name)
+            if cached:
+                return cached
+            
+            # Check if server is registered
+            if server_name not in self.server_configs:
+                logger.warning(f"Server '{server_name}' not registered")
+                return None
+            
+            # Create new proxy
+            config = self.server_configs[server_name]
+            logger.info(f"Creating new proxy for '{server_name}' (active: {self.cache.size()}/{self.max_connections})")
             
             try:
-                async with asyncio.timeout(35.0): # Slightly longer than inner timeout
-                    await self._connected_event.wait()
-            except asyncio.TimeoutError:
-                self.error = ToolError(f"Connection to '{self.server_name}' timed out during startup")
-            
-            if self.error:
-                # Try to cleanup if task failed
-                await self.stop()
-                if isinstance(self.error, ToolError):
-                    raise self.error
-                raise ToolError(f"Failed to connect to '{self.server_name}': {str(self.error)}")
+                proxy = await self._create_proxy(config)
                 
-            return self.client
-
-    async def _run(self):
-        """Background task that owns the connection and its contexts."""
-        self._stack = AsyncExitStack()
-        try:
-            transport = self.config["transport"]
-            headers = dict(self.config.get("headers", {}))
-            
-            if "auth" in self.config:
-                token = self.auth_manager.get_token(self.server_name)
-                if not token:
-                    token = await self.auth_manager.refresh_token(self.server_name, self.config)
-                if token:
-                    headers["Authorization"] = f"Bearer {token}"
-
-            async with asyncio.timeout(30.0):
-                if transport == "stdio":
-                    server_params = StdioServerParameters(
-                        command=self.config["command"],
-                        args=self.config.get("args", []),
-                        env=self.config.get("env")
-                    )
-                    read_stream, write_stream = await self._stack.enter_async_context(stdio_client(server_params))
-                    self.client = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
-                    await self.client.initialize()
-                elif transport in ["sse", "http"]:
-                    url = self.config["url"]
-                    read_stream, write_stream = await self._stack.enter_async_context(sse_client(url, headers=headers))
-                    self.client = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
-                    await self.client.initialize()
-                else:
-                    raise ValueError(f"Unknown transport: {transport}")
+                # Put in cache - this may evict an old connection
+                evicted_key, evicted_proxy = self.cache.put(server_name, proxy)
                 
-            # Successfully connected
-            self._connected_event.set()
-            
-            # Keep the task alive until stopped
-            await self._stop_event.wait()
-            
-        except Exception as e:
-            logging.exception(f"[{self.server_name}] connection failed")
-            self.error = e
-            self._connected_event.set()
-        finally:
-            if self._stack:
-                await self._stack.aclose()
-            self.client = None
-            self._stack = None
-
-    async def stop(self):
-        """Stop the connection task and wait for cleanup."""
-        self._stop_event.set()
-        if self._task:
-            if not self._task.done():
-                try:
-                    await asyncio.wait_for(self._task, timeout=5.0)
-                except (asyncio.TimeoutError, Exception):
-                    self._task.cancel()
-            self._task = None
-
-class MCPToolRegistry:
-    """Registry of all MCP servers and their tools with LRU connection pooling"""
-    
-    def __init__(self, config_path: Path, auth_manager: AuthManager):
-        self.servers: Dict[str, Dict] = {}  # server_name -> {config, tools, connection}
-        self.tool_to_server: Dict[str, str] = {} # tool_name -> server_name
-        self._active_connections: List[str] = [] # LRU list of server names
-        # Track the warmup background task so it can be cancelled on shutdown
-        self._warmup_task: Optional[asyncio.Task] = None
-        # Lock to protect concurrent access to the LRU active connections list
-        self._pool_lock: asyncio.Lock = asyncio.Lock()
-        self.auth_manager = auth_manager
-        self._load_config(config_path)
-    
-    def _load_config(self, config_path: Path):
-        """Load server configurations from JSON file"""
-        if not config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
-        
-        with open(config_path) as f:
-            data = json.load(f)
-        
-        self.tool_to_server.clear()
-        for server_config in data.get("servers", []):
-            server_name = server_config["name"]
-            
-            tools = {}
-            for tool in server_config.get("tools", []):
-                t_name = tool["name"]
-                tools[t_name] = tool
-                self.tool_to_server[t_name] = server_name
-            
-            self.servers[server_name] = {
-                "config": server_config,
-                "tools": tools,
-                "connection": ServerConnection(server_name, server_config, self.auth_manager)
-            }
-        
-        logging.info(f"Loaded {len(self.servers)} MCP servers with {len(self.tool_to_server)} total tools")
-
-    def total_tools(self) -> int:
-        """Return total number of tools across all servers"""
-        return len(self.tool_to_server)
-    
-    def get_server_for_tool(self, tool_name: str) -> Optional[str]:
-        """Find which server hosts the given tool (O(1) lookup)"""
-        return self.tool_to_server.get(tool_name)
-
-    async def _close_connection(self, server_name: str):
-        """Close a specific server connection and clean up its resources"""
-        server_info = self.servers[server_name]
-        conn = server_info["connection"]
-        logging.info(f"Closing connection to server: {server_name}")
-        await conn.stop()
-        async with self._pool_lock:
-            if server_name in self._active_connections:
-                self._active_connections.remove(server_name)
-
-    async def connect_to_server(self, server_name: str) -> ClientSession:
-        """Connect to an MCP server with LRU pool management"""
-        server_info = self.servers[server_name]
-        conn = server_info["connection"]
-        
-        # If already connected, move to end of LRU (most recently used)
-        client = await conn.start()
-        if client:
-            async with self._pool_lock:
-                if server_name in self._active_connections:
-                    self._active_connections.remove(server_name)
-                self._active_connections.append(server_name)
-            return conn.client
-        
-        # Manage pool size: if we hit the limit, close the oldest connection
-        while True:
-            async with self._pool_lock:
-                if len(self._active_connections) < Config.MAX_OPEN_CONNECTIONS:
-                    break
-                oldest_server = self._active_connections.pop(0)
-            await self._close_connection(oldest_server)
-
-        client = await conn.start()
-        async with self._pool_lock:
-            self._active_connections.append(server_name)
-        return client
-
-    async def warmup(self):
-        """
-        Robust Warmup:
-        1. Staggered: Wait 500ms between each server to avoid CPU spikes.
-        2. Readiness Probing: Verify the connection is actually responsive.
-        """
-        # Initial 1s delay to let the main process bind to its port
-        await asyncio.sleep(1.0)
-        
-        limit = Config.WARMUP_LIMIT
-        servers_to_warm = list(self.servers.keys())[:limit]
-        
-        if not servers_to_warm:
-            return
-
-        logging.info(f"Starting staggered warmup for {len(servers_to_warm)} servers...")
-        
-        for i, name in enumerate(servers_to_warm):
-            try:
-                # 1. Staggered delay (except for the first one)
-                if i > 0:
-                    await asyncio.sleep(0.5)
+                # Cleanup evicted connection if any
+                if evicted_key:
+                    await self._cleanup_proxy(evicted_key, evicted_proxy)
                 
-                # 2. Connect
-                client = await self.connect_to_server(name)
-                
-                # 3. Readiness Probe: Send a simple request to ensure session is alive
-                async with asyncio.timeout(5.0):
-                    await client.list_tools()
-                
-                logging.info(f"  [✓] {name} is ready")
+                return proxy
                 
             except Exception as e:
-                logging.warning(f"  [✗] Warmup/Probe failed for {name}: {e}")
-                # We don't call _close_connection here to allow it to retry on the first real call
-                
-        logging.info(f"Warmup phase complete. {len(self._active_connections)} servers active.")
-        # read active count under lock to avoid race with concurrent connects
-        async with self._pool_lock:
-            active_count = len(self._active_connections)
-        logging.info(f"Warmup phase complete. {active_count} servers active.")
-
-    async def cleanup(self):
-        """Close all active server connections"""
-        async with self._pool_lock:
-            active_copy = list(self._active_connections)
-        for name in active_copy:
-            await self._close_connection(name)
-
-    def _format_result(self, result: Any) -> str:
-        """Helper to extract text from an MCP CallToolResult object."""
-        try:
-            if hasattr(result, 'content'):
-                # Extract text from all content blocks that have it
-                texts = [c.text for c in result.content if hasattr(c, 'text')]
-                return "\n".join(texts) if texts else str(result)
-            return str(result)
-        except Exception:
-            return str(result)
+                logger.error(f"Failed to create proxy for '{server_name}': {e}")
+                return None
     
-    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any], auth_manager: AuthManager) -> str:
-        server_name = self.get_server_for_tool(tool_name)
-        if not server_name:
-            raise ToolError(f"Tool '{tool_name}' not found in any configured MCP server")
+    async def _create_proxy(self, config: dict) -> FastMCP:
+        """Create a proxy for a single server"""
+        transport_type = config.get("transport", "http")
+        name = config["name"]
         
-        server_config = self.servers[server_name]["config"]
-        
-        # Check if auth is required but missing/stale
-        if "auth" in server_config:
-            token = auth_manager.get_token(server_name)
-            if not token:
-                token = await auth_manager.refresh_token(server_name, server_config)
-            
-            if not token:
-                raise ToolError(f"Authentication required for '{server_name}'. Please run setup_server.py to authenticate.")
-
         try:
-            # Stage 1: Get or create persistent connection
-            client = await self.connect_to_server(server_name)
-            
-            # Stage 2: Call tool with a sensible timeout (e.g. 60s)
-            try:
-                async with asyncio.timeout(60.0):
-                    result = await client.call_tool(tool_name, arguments=arguments)
-                    
-                    if hasattr(result, 'isError') and result.isError:
-                        return f"❌ **Tool returned an error:**\n\n{self._format_result(result)}"
-                        
-                    return self._format_result(result)
-            except asyncio.TimeoutError:
-                raise ToolError(f"Tool execution timed out after 60s: {tool_name}")
-            except Exception as e:
-                # If the session is dead, we close it so it can be re-opened fresh next time
-                logging.error(f"Error calling tool {tool_name} on {server_name}, closing connection: {e}")
-                await self._close_connection(server_name)
-                raise ToolError(f"Error calling tool on {server_name}: {str(e)}")
+            if transport_type == "http":
+                # Simple URL-based proxy (recommended)
+                proxy = create_proxy(
+                    config["url"],
+                    name=name
+                )
+            elif transport_type == "stdio":
+                # Use command if available (executable), fallback to target
+                executable = config.get("command", config.get("target"))
+                args = config.get("args", [])
+                env = config.get("env")
                 
+                # Create explicit stdio transport to avoid inference issues with commands like 'uv'
+                stdio_transport = StdioTransport(
+                    command=executable,
+                    args=args,
+                    env=env
+                )
+                
+                proxy = create_proxy(
+                    stdio_transport,
+                    name=name
+                )
+                logger.info(f"Creating proxy for '{name}' with transport 'stdio', executable: {executable}, args: {args}")
+            else:
+                raise ValueError(f"Unknown transport: {transport_type}")
+            
+            # Initialize the proxy (warm it up)
+            # Note: create_proxy returns a server that needs to be "mounted" or accessed
+            # For FastMCP, we need to ensure it's ready
+            if hasattr(proxy, 'initialize'):
+                await proxy.initialize()
+            
+            return proxy
+            
         except Exception as e:
-            if isinstance(e, ToolError):
-                raise
-            logging.error(f"Error executing {tool_name}: {traceback.format_exc()}")
-            raise ToolError(f"Failed to execute '{tool_name}': {str(e)}")
+            logger.error(f"Error creating proxy for '{name}': {e}")
+            raise
+    
+    async def _cleanup_proxy(self, server_name: str, proxy: FastMCP):
+        """Properly cleanup a proxy connection"""
+        logger.info(f"Cleaning up proxy for '{server_name}'")
+        try:
+            # Attempt graceful shutdown
+            if hasattr(proxy, 'close'):
+                await proxy.close()
+            elif hasattr(proxy, 'cleanup'):
+                await proxy.cleanup()
+        except Exception as e:
+            logger.warning(f"Error during cleanup of '{server_name}': {e}")
+    
+    async def warmup_popular_servers(self, popularity_list: list, limit: int = 10):
+        """
+        Pre-warm the most popular servers based on historical usage
+        
+        Args:
+            popularity_list: List of server names in order of popularity
+            limit: Maximum number to warm up
+        """
+        logger.info(f"Warming up top {limit} popular servers...")
+        tasks = []
+        for server_name in popularity_list[:limit]:
+            if server_name in self.server_configs:
+                tasks.append(self.get_proxy(server_name))
+        
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            success_count = sum(1 for r in results if r and not isinstance(r, Exception))
+            logger.info(f"Warmed up {success_count}/{len(tasks)} servers")
+    
+    async def get_active_servers(self) -> list:
+        """Get list of currently active server names"""
+        return self.cache.keys()
+    
+    async def cleanup_all(self):
+        """Cleanup all active connections"""
+        logger.info(f"Cleaning up all {self.cache.size()} active connections...")
+        for server_name in self.cache.keys():
+            proxy = self.cache.get(server_name)
+            if proxy:
+                await self._cleanup_proxy(server_name, proxy)
+        # Clear cache
+        while self.cache.size() > 0:
+            self.cache.popitem(last=False)
 
 
-@dataclass
-class AppContext:
-    """Application context with shared resources"""
-    searcher: HybridToolSearcher
-    registry: MCPToolRegistry
-    auth_manager: AuthManager
+# ============= Integration with FastMCP =============
 
-
-@asynccontextmanager
-async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    """Manage application lifecycle"""
-    searcher = get_shared_searcher()
-    auth_manager = get_auth_manager()
+# Load your 1000 server configs
+def load_all_server_configs() -> list:
+    """Load your 1000 server configurations from JSON/database"""
+    # Example: load from JSON file
+    import json
+    from pathlib import Path
+    
     config_path = Path(__file__).parent / "mcp_servers.json"
-    registry = MCPToolRegistry(config_path, auth_manager)
-    registry._warmup_task = asyncio.create_task(registry.warmup())
+    with open(config_path) as f:
+        data = json.load(f)
+    
+    # You can have 1000+ servers here
+    return data.get("servers", [])
 
+
+# Create the dynamic manager
+server_configs = load_all_server_configs()
+
+# Define your hot tier (servers that should always stay connected)
+hot_tier_servers = [
+    cfg for cfg in server_configs 
+    if cfg.get("priority") == "high"  # Mark high-priority servers in your config
+][:10]  # Keep top 10 always connected
+
+# Initialize the manager
+proxy_manager = DynamicProxyManager(
+    max_connections=50,  # Keep 50 servers active at once
+    default_servers=hot_tier_servers  # Pre-initialize these
+)
+
+# Register all 1000 servers (configs only, no connections yet)
+for config in server_configs:
+    proxy_manager.register_server(config)
+
+
+# ============= FastMCP Server Setup =============
+
+@lifespan
+async def app_lifespan(server: FastMCP):
+    """Application lifespan with background maintenance"""    
+    # Start background task to log cache stats periodically
+    async def log_stats():
+        while True:
+            await asyncio.sleep(60)  # Every minute
+            active = await proxy_manager.get_active_servers()
+            logger.info(f"Active connections: {len(active)}/{proxy_manager.max_connections}")
+    
+    stats_task = asyncio.create_task(log_stats())
+    
     try:
-        yield AppContext(searcher=searcher, registry=registry, auth_manager=auth_manager)
+        yield {"proxy_manager": proxy_manager, "searcher": searcher, "tool_to_server": tool_to_server_map, "auth_manager": auth_manager}
     finally:
-        # Cancel warmup task if it's still running to avoid asyncio task leaks
-        task = getattr(registry, "_warmup_task", None)
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-
-        # Cleanup connections
-        await registry.cleanup()
+        stats_task.cancel()
+        await proxy_manager.cleanup_all()
 
 
-# ============= Create MCP Server =============
-
-mcp_stdio = FastMCP(
-    name="Ansam",
-    instructions="Search and execute tools across multiple MCP servers",
+# Create main FastMCP server
+mcp = FastMCP(
+    name="Ansam-Scaled",
+    instructions="Dynamic proxy manager for 1000+ MCP servers",
     lifespan=app_lifespan
 )
 
-mcp_sse = FastMCP(
-    name="Ansam",
-    instructions="Search and execute tools across multiple MCP servers",
-    lifespan=app_lifespan,
-    port=8000,
-    host="0.0.0.0"
-)
 
 
-# ============= Tool: Search for Tools (using hybrid search) =============
 
-@mcp_stdio.tool(
-    name="search_tools",
-    description="Search for relevant MCP tools based on a short key descriptive words. Returns tool names, descriptions, and parameter schemas."
-)
-@mcp_sse.tool(
-    name="search_tools",
-    description="Search for relevant MCP tools based on a short key descriptive words. Returns tool names, descriptions, and parameter schemas."
-)
+
+
+
+# ------------
+@mcp.tool(task=True)
 async def search_tools(
     query: str,
-    ctx: Context[ServerSession, AppContext]
-) -> str:
+    ctx: Context,
+    progress: Progress = Progress()
+) -> str:   
     """Search for tools using hybrid retrieval."""
     try:
-        searcher = ctx.request_context.lifespan_context.searcher
         
-        await ctx.report_progress(0.3, 1.0, "Searching for relevant tools...")
+        await progress.set_total(4)  # 4 main steps
+        await progress.set_message("Initializing search...")
+        await progress.increment()
+        
         
         # Perform hybrid search
+        await progress.set_message("Searching for relevant tools...")
         results = await asyncio.to_thread(searcher.search, query)
+        await progress.increment()
         
         # Filter results based on authentication status
+        await progress.set_message("Checking authentication status...")
         authenticated_results = []
-        app_ctx = ctx.request_context.lifespan_context
         for res in results:
-            server_name = app_ctx.registry.get_server_for_tool(res['tool_name'])
+            server_name = get_server_by_tool(res['tool_name'])
             if server_name:
-                server_config = app_ctx.registry.servers[server_name]["config"]
+                server_config = proxy_manager.server_configs.get(server_name, {})
                 if "auth" in server_config:
                     # Check if we have a token or can refresh
-                    token = app_ctx.auth_manager.get_token(server_name)
+                    token = auth_manager.get_token(server_name)
                     if not token:
-                        token = await app_ctx.auth_manager.refresh_token(server_name, server_config)
+                        token = await auth_manager.refresh_token(server_name, server_config)
                     
                     if not token:
                         # Skip this tool, user hasn't authenticated yet
@@ -439,7 +368,7 @@ async def search_tools(
         if not results:
             return "No tools found matching your query."
         
-        output = f"🔍 Found {len(results)} relevant tools for: '{query}'\n\n"
+        output = ""
         
         for i, result in enumerate(results, 1):
             tool_schema = result.get('tool_schema', {})
@@ -449,7 +378,6 @@ async def search_tools(
             relevance_score = result.get('relevance_score', 1.0)
             
             output += f"{i}. **Tool Name:** `{tool_name}`\n"
-            output += f"   **Relevance:** {relevance_score:.3f}\n"
             output += f"   **Description:** {tool_description}\n"
             
             # Format parameters
@@ -479,93 +407,71 @@ async def search_tools(
         raise ToolError(f"Search failed: {str(e)}")
 
 
-# ============= Tool: Call Tool Proxy =============
 
-@mcp_stdio.tool(
-    name="call_tool",
-    description="Execute a tool on its original MCP server. Provide the exact tool name and arguments as a JSON string."
-)
-@mcp_sse.tool(
-    name="call_tool",
-    description="Execute a tool on its original MCP server. Provide the exact tool name and arguments as a JSON string."
-)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def get_server_by_tool(tool_name: str) -> str:
+    """
+    Retrieves the server name in O(1) time using the pre-processed map.
+    """
+    return tool_to_server_map.get(tool_name, "Tool not found")
+
+
+@mcp.tool(task=True)
 async def call_tool(
     tool_name: str,
-    arguments: Union[str, Dict[str, Any]],
-    ctx: Context[ServerSession, AppContext]
-) -> str:
+    arguments: dict,
+    ctx: Context
+):
     """
-    Call a tool on its original MCP server.
+    Call a tool on any registered server.
+    Server is loaded on-demand and cached via LRU.
+    """
     
-    Args:
-        tool_name: The exact unique identifier of the tool (e.g., "send-email")
-        arguments: JSON string or dictionary of arguments to pass to the tool.
-    """
+    # Get or create proxy for this server
+    server_name = get_server_by_tool(tool_name)
+    
+    ctx.info(f"Received request to call tool '{tool_name}' on server '{server_name}' with arguments: {arguments}")
+
+    proxy = await proxy_manager.get_proxy(server_name)
+    
+    # return f"Calling '{tool_name}' on server '{server_name}' with arguments: {arguments}"
+
+    if not proxy:
+        return f"Server '{server_name}' not found or failed to connect"
+    
     try:
-        # Parse arguments if string, else use as-is
-        if isinstance(arguments, str):
-            try:
-                args_dict = json.loads(arguments) if arguments else {}
-            except json.JSONDecodeError as e:
-                raise ToolError(f"Invalid JSON arguments: {str(e)}. Arguments must be a valid JSON string or a JSON object.")
-        else:
-            args_dict = arguments
+        # Call the tool on the proxy
+        result = await proxy.call_tool(tool_name, arguments)
+        return result
         
-        await ctx.report_progress(0.3, 1.0, f"Looking up server for '{tool_name}'...")
-        
-        # Execute the tool using registry
-        app_ctx = ctx.request_context.lifespan_context
-        registry = app_ctx.registry
-        result = await registry.execute_tool(tool_name, args_dict, app_ctx.auth_manager)
-        
-        await ctx.report_progress(0.9, 1.0, "Tool execution completed")
-        
-        return f"✅ **Tool executed successfully:** `{tool_name}`\n\n{result}"
-        
-    except ToolError:
-        raise
     except Exception as e:
-        raise ToolError(f"Tool execution failed: {str(e)}")
+        return f"Error calling {tool_name} on {server_name}: {e}"
 
 
-# ============= Main Entry Points =============
 
-async def run_stdio():
-    await mcp_stdio.run_stdio_async()
-
-async def run_sse():
-    await mcp_sse.run_sse_async()
-
-if __name__ == "__main__":
-    import sys
-    # Show ResourceWarnings with tracebacks to help diagnose unclosed streams
-    warnings.simplefilter("default", ResourceWarning)
-
-    def _log_exception_group(exc: BaseException):
-        """Log ExceptionGroup/BaseExceptionGroup inner exceptions with tracebacks."""
-        logging.error("Top-level exception: %s", exc)
-        inner = getattr(exc, 'exceptions', None)
-        if inner and isinstance(inner, (list, tuple)):
-            for i, sub in enumerate(inner, start=1):
-                try:
-                    if isinstance(sub, BaseException):
-                        logging.error("--- Sub-exception %d: %s", i, sub)
-                        tb = ''.join(traceback.format_exception(type(sub), sub, sub.__traceback__))
-                        logging.error(tb)
-                    else:
-                        logging.error("--- Sub-exception %d (non-exception): %r", i, sub)
-                except Exception:
-                    logging.exception("Failed to log sub-exception %d", i)
-
-    try:
-        if len(sys.argv) > 1 and sys.argv[1] == "--sse":
-            asyncio.run(run_sse())
-        else:
-            asyncio.run(run_stdio())
-    except BaseException as e:
-        # anyio/asyncio may raise ExceptionGroup/BaseExceptionGroup. Log details.
-        if hasattr(e, 'exceptions'):
-            _log_exception_group(e)
-        else:
-            logging.exception("Unhandled exception in main: %s", e)
-        raise
+if __name__ == "__main__":    
+    match sys.argv[1]:
+        case "--sse":
+            mcp.run(transport="sse", host="0.0.0.0", port=8000)
+            logger.info("Starting MCP server with HTTP transport (SSE)")
+        case "--http":
+            mcp.run(transport="http", host="0.0.0.0", port=8000)
+        case _:
+            logger.info("Starting MCP server with stdio transport")
+            mcp.run(transport="stdio")
