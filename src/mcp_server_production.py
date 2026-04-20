@@ -10,6 +10,7 @@ from fastmcp.server.lifespan import lifespan
 import json
 from pathlib import Path
 import logging
+from fastmcp.client.transports.stdio import StdioTransport
 import sys
 
 from auth_manager import AuthManager
@@ -161,28 +162,36 @@ class DynamicProxyManager:
     
     async def _create_proxy(self, config: dict) -> FastMCP:
         """Create a proxy for a single server"""
-        transport = config.get("transport", "http")
+        transport_type = config.get("transport", "http")
         name = config["name"]
         
-        
-        
         try:
-            if transport == "http":
+            if transport_type == "http":
                 # Simple URL-based proxy (recommended)
                 proxy = create_proxy(
                     config["url"],
                     name=name
                 )
-            elif transport == "stdio":
-                proxy = create_proxy(
-                    target=config["target"],
-                    # args=config.get("args", []),
-                    name=name,
-                    args=config.get("args", []),
+            elif transport_type == "stdio":
+                # Use command if available (executable), fallback to target
+                executable = config.get("command", config.get("target"))
+                args = config.get("args", [])
+                env = config.get("env")
+                
+                # Create explicit stdio transport to avoid inference issues with commands like 'uv'
+                stdio_transport = StdioTransport(
+                    command=executable,
+                    args=args,
+                    env=env
                 )
-                print(f"Creating proxy for '{name}' with transport '{transport}'args: {config.get('args', [])}")
+                
+                proxy = create_proxy(
+                    stdio_transport,
+                    name=name
+                )
+                logger.info(f"Creating proxy for '{name}' with transport 'stdio', executable: {executable}, args: {args}")
             else:
-                raise ValueError(f"Unknown transport: {transport}")
+                raise ValueError(f"Unknown transport: {transport_type}")
             
             # Initialize the proxy (warm it up)
             # Note: create_proxy returns a server that needs to be "mounted" or accessed
