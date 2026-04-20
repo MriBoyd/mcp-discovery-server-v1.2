@@ -100,7 +100,7 @@ class ServerConnection:
         self._stack = AsyncExitStack()
         try:
             transport = self.config["transport"]
-            headers = self.config.get("headers", {})
+            headers = dict(self.config.get("headers", {}))
             
             if "auth" in self.config:
                 token = self.auth_manager.get_token(self.server_name)
@@ -213,7 +213,8 @@ class MCPToolRegistry:
         conn = server_info["connection"]
         
         # If already connected, move to end of LRU (most recently used)
-        if conn.client:
+        client = await conn.start()
+        if client:
             if server_name in self._active_connections:
                 self._active_connections.remove(server_name)
             self._active_connections.append(server_name)
@@ -347,8 +348,8 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     
     # Warm up in background to avoid blocking server start
     # but still get them ready as soon as possible
-    asyncio.create_task(registry.warmup())
-    
+    warmup_task = asyncio.create_task(registry.warmup())
+        
     yield AppContext(searcher=searcher, registry=registry, auth_manager=auth_manager)
     
     # Cleanup
