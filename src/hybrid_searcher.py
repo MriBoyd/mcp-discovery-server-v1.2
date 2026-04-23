@@ -4,11 +4,13 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from typing import List, Dict, Any, Tuple, Optional
 from tqdm import tqdm
+import uuid
 import logging
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-
+from concurrent.futures import ThreadPoolExecutor
+import re
 from src.code_embedder import CodeEmbedder
 from src.local_reranker import LocalReranker
 from src.config import Config
@@ -35,7 +37,6 @@ class HybridToolSearcher:
         self._cache_ttl = Config.SEARCH_CACHE_TTL if hasattr(Config, 'SEARCH_CACHE_TTL') else 3600
         
         # Initialize regex for tokenization
-        import re
         self.token_pattern = re.compile(r'[^a-zA-Z0-9]')
         self.camel_pattern = re.compile(r'([a-z])([A-Z])')
         
@@ -145,10 +146,7 @@ class HybridToolSearcher:
     def index(self, tools: List[Dict[str, Any]], force_reindex: bool = False):
         """
         Index tools incrementally. Only embeds tools not already in Qdrant.
-        """
-        import uuid
-        import hashlib
-        
+        """        
         self.tools = tools
         self.tool_texts = [self._prepare_tool_text(tool) for tool in tools]
         
@@ -375,9 +373,6 @@ class HybridToolSearcher:
                 self._save_to_cache(cache_key, res)
                 return res
 
-
-        from concurrent.futures import ThreadPoolExecutor
-        
         start_time = time.time()
         
         # Stage 1 & 2: Parallel BM25 and Dense search

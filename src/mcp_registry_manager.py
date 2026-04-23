@@ -11,16 +11,15 @@ import logging
 import sys
 import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Union
-from datetime import datetime
+from typing import Dict, List, Any
 import argparse
 import shlex
-import httpx
-import anyio
 
 # MCP imports
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
+from contextlib import AsyncExitStack
 from mcp.client.sse import sse_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
@@ -110,7 +109,6 @@ class MCPRegistryManager:
                     async with AsyncExitStack() as stack:
                         if transport_type == "http":
                             # Use streamable_http_client if explicit, else sse
-                            from mcp.client.streamable_http import streamable_http_client
                             http_client = await stack.enter_async_context(create_mcp_http_client(headers)) if headers else None
                             transport = await stack.enter_async_context(streamable_http_client(url, http_client=http_client))
                             read, write, _ = transport
@@ -187,8 +185,6 @@ class MCPRegistryManager:
         
         total_tools = sum(len(s.get('tools', [])) for s in final_servers.values())
         logger.info(f"Saved {len(final_servers)} servers ({total_tools} tools) to {output_file}")
-
-from contextlib import AsyncExitStack
 
 async def main():
     parser = argparse.ArgumentParser(description="MCP Registry Manager - Universal Tool Discovery & Extraction")
