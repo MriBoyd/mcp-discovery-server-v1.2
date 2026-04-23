@@ -206,6 +206,7 @@ class HybridToolSearcher:
                 vector=embeddings_list[j],
                 payload={
                     "name": tools[i]['name'],
+                    "index": i,
                     "text": self.tool_texts[i],
                     "tool": tools[i]
                 }
@@ -261,10 +262,42 @@ class HybridToolSearcher:
         search_result = self.qdrant.query_points(
             collection_name=Config.QDRANT_COLLECTION,
             query=query_embedding,
-            limit=top_k
+            limit=top_k,
+            with_payload=True
         )
-        
-        return [(hit.score, int(hit.id)) for hit in search_result.points]
+
+        results = []
+        for hit in search_result.points:
+            idx = None
+            # Prefer explicit payload index
+            if hasattr(hit, 'payload') and hit.payload:
+                if 'index' in hit.payload:
+                    try:
+                        idx = int(hit.payload['index'])
+                    except Exception:
+                        idx = None
+                elif 'name' in hit.payload:
+                    # fallback: map name to index
+                    try:
+                        name = hit.payload['name']
+                        for i, t in enumerate(self.tools):
+                            if t.get('name') == name:
+                                idx = i
+                                break
+                    except Exception:
+                        idx = None
+
+            # Last resort: try converting id to int (some collections may use numeric ids)
+            if idx is None:
+                try:
+                    idx = int(hit.id)
+                except Exception:
+                    # cannot determine index; skip this hit
+                    continue
+
+            results.append((hit.score, int(idx)))
+
+        return results
     
     def _normalize_scores(self, scores: List[float]) -> List[float]:
         """Normalize scores to [0, 1] range using min-max scaling."""
