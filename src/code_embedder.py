@@ -6,7 +6,8 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 from typing import List, Union
 from config import Config
-import logging 
+import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from functools import lru_cache
 
@@ -49,34 +50,81 @@ class CodeEmbedder:
         
         if not abs_model_path.exists():
             # List directory content to help you debug in logs
+            logging.error(f"Model path does not exist: {abs_model_path}")
             raise FileNotFoundError(f"Could not find model at {abs_model_path}")
         
         
         # Load model and tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path, 
-            cache_dir=cache_dir,
-            local_files_only=True  # Force offline
-        )
-        self.model = AutoModel.from_pretrained(
-            model_path,
-            cache_dir=cache_dir,
-            dtype=torch.bfloat16 if Config.DEVICE == "cuda" else torch.float32,
-            local_files_only=True
-        )
+        logging.info(f"Loading tokenizer from {model_path}")
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                cache_dir=cache_dir,
+                local_files_only=True  # Force offline
+            )
+            logging.info("Tokenizer loaded")
+        except Exception as e:
+            logging.exception(f"Failed to load tokenizer from {model_path}: {e}")
+            raise
+
+        logging.info(f"Loading model from {model_path} (device={Config.DEVICE})")
+        try:
+            self.model = AutoModel.from_pretrained(
+                model_path,
+                cache_dir=cache_dir,
+                dtype=torch.bfloat16 if Config.DEVICE == "cuda" else torch.float32,
+                local_files_only=True
+            )
+            logging.info("Model loaded")
+        except Exception as e:
+            logging.exception(f"Failed to load model from {model_path}: {e}")
+            raise
         self.model.eval()
         self.model.to(Config.DEVICE)
         
         # CPU Optimization: Dynamic Quantization
         if Config.DEVICE == "cpu":
-            try:
-                # Quantize Linear layers to int8 for speedup on CPU
-                self.model = torch.quantization.quantize_dynamic(
-                    self.model, {torch.nn.Linear}, dtype=torch.qint8
-                )
-            except Exception as e:
-                import logging
-                logging.warning(f"Failed to quantize embedder: {e}")
+            if getattr(Config, 'QUANTIZE_EMBEDDER', True):
+                # Perform quantization on a CPU copy and validate result.
+                original_model = self.model
+
+                def _do_quantize(m):
+                    # Ensure model is on CPU and in float32 for quantization
+                    m = m.to('cpu')
+                    return torch.quantization.quantize_dynamic(m, {torch.nn.Linear}, dtype=torch.qint8)
+
+                logging.info("Starting dynamic quantization of model for CPU (timed)")
+                try:
+                    with ThreadPoolExecutor(max_workers=1) as ex:
+                        fut = ex.submit(_do_quantize, original_model)
+                        quantized = fut.result(timeout=getattr(Config, 'QUANTIZE_TIMEOUT', 30))
+
+                    # Validate and attach quantized model
+                    try:
+                        quantized.eval()
+                        quantized.to(Config.DEVICE)
+                        self.model = quantized
+                        logging.info("Dynamic quantization complete; quantized model attached")
+
+                        # Free original model resources
+                        try:
+                            del original_model
+                        except Exception:
+                            pass
+                        import gc
+                        gc.collect()
+                    except Exception as e:
+                        logging.warning(f"Quantized model validation failed: {e}; keeping original model")
+                        self.model = original_model
+
+                except TimeoutError:
+                    logging.warning("Dynamic quantization timed out; continuing with unquantized model")
+                    self.model = original_model
+                except Exception as e:
+                    logging.warning(f"Failed to quantize embedder: {e}; continuing with unquantized model")
+                    self.model = original_model
+            else:
+                logging.info("Dynamic quantization disabled by config; skipping")
         
     
     def last_token_pool(self, last_hidden_states, attention_mask):

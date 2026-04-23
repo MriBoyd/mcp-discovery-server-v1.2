@@ -62,5 +62,11 @@ class Config:
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["SENTENCE_TRANSFORMERS_HOME"] = MODEL_CACHE_DIR
+
+    # Quantization controls
+    # Set QUANTIZE_EMBEDDER=0 to disable dynamic quantization (useful for debugging)
+    QUANTIZE_EMBEDDER = os.getenv("QUANTIZE_EMBEDDER", "1") != "0"
+    # Timeout (seconds) for attempting dynamic quantization. If exceeded, quantization is skipped.
+    QUANTIZE_TIMEOUT = int(os.getenv("QUANTIZE_TIMEOUT", "30"))
     
     
