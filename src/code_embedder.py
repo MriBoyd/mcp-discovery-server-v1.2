@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 from typing import List, Union
-from src.config import Config
+from config import Config
 import logging 
 
 from functools import lru_cache

@@ -11,9 +11,9 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from concurrent.futures import ThreadPoolExecutor
 import re
-from src.code_embedder import CodeEmbedder
-from src.local_reranker import LocalReranker
-from src.config import Config
+from code_embedder import CodeEmbedder
+from local_reranker import LocalReranker
+from config import Config
 
 from collections import OrderedDict
 

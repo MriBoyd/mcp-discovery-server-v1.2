@@ -1,7 +1,6 @@
 import asyncio
-import threading
 from collections import OrderedDict
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 from fastmcp.server import create_proxy
 import json
 from fastmcp import FastMCP, Context

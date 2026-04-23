@@ -5,14 +5,22 @@ import torch
 class Config:
     
     # Model paths (local cache)
-    MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", ".")
+    MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "../model-cache")
+    
+    
+    
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    jinna_model_path = os.path.join(base_dir, "jina-code-0.5b")
+    rerank_model_path = os.path.join(base_dir, "re-rank")
+
     
     # Jina Code Embeddings (local)
-    CODE_EMBEDDING_MODEL = "./jina-code-0.5b"
+    CODE_EMBEDDING_MODEL = jinna_model_path
+    RERANKER_MODEL = rerank_model_path  # or GGUF version
+    
     EMBEDDING_DIM = 896
     
     # Reranker (local)
-    RERANKER_MODEL = "./re-rank"  # or GGUF version
     
     # Search settings
     BM25_CANDIDATES = 20      # Initial BM25 retrieval
