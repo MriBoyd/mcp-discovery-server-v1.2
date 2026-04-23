@@ -12,7 +12,7 @@ from functools import lru_cache
 
 class CodeEmbedder:
     """
-    Local wrapper for jina-code-embeddings-1.5b
+    Local wrapper for jina-code-0.5b
     Supports task-specific instructions for optimal retrieval
     """
     

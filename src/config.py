@@ -8,7 +8,7 @@ class Config:
     MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", ".")
     
     # Jina Code Embeddings (local)
-    CODE_EMBEDDING_MODEL = "./embed-models"
+    CODE_EMBEDDING_MODEL = "./jina-code-0.5b"
     EMBEDDING_DIM = 896
     
     # Reranker (local)

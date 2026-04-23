@@ -21,7 +21,7 @@ Ansam is a high-performance Model Context Protocol (MCP) "Super-Server" designed
 To ensure the agent finds the *exact* tool it needs among thousands, we use a sophisticated retrieval strategy:
 
 1.  **Lexical Search (BM25):** Optimized for matching technical terms, parameter names, and specific function signatures.
-2.  **Dense Semantic Search (Qdrant + Jina):** Uses `jina-embeddings-v3` to capture the "intent" behind a query (e.g., "help me with my calendar" vs. "list_google_calendar_events").
+2.  **Dense Semantic Search (Qdrant + Jina):** Uses `jina-code-0.5b` to capture the "intent" behind a query (e.g., "help me with my calendar" vs. "list_google_calendar_events").
 3.  **Cross-Encoder Reranking:** A final high-precision pass that compares the top 20-30 candidates against the query to ensure the highest relevance score.
 
 ---
