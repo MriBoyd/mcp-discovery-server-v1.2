@@ -1,0 +1,155 @@
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance, VectorParams, models,
+    Document, PointStruct
+)
+import csv
+import urllib.request
+import itertools
+
+# =========================
+# CONFIG
+# =========================
+collection_name = "hybrid-search"
+
+dense_embedding_model = "sentence-transformers/all-MiniLM-L6-v2"
+sparse_embedding_model = "prithivida/Splade_PP_en_v1"
+late_interaction_embedding_model = "colbert-ir/colbertv2.0"
+
+csv_url = "https://raw.githubusercontent.com/qdrant/examples/refs/heads/master/sci-fi-books/top_100_scifi_books_full.csv"
+
+BATCH_SIZE = 32
+PREFETCH_LIMIT = 100   # 🔥 increased (oversampling)
+FINAL_LIMIT = 10
+
+# =========================
+# CLIENT
+# =========================
+client = QdrantClient(
+    url="http://0.0.0.0:6333",
+)
+
+# =========================
+# COLLECTION SETUP
+# =========================
+if client.collection_exists(collection_name):
+    client.delete_collection(collection_name)
+
+client.create_collection(
+    collection_name,
+    vectors_config={
+        "dense": VectorParams(
+            size=384,
+            distance=Distance.COSINE,
+        ),
+        "multi": VectorParams(
+            size=128,
+            distance=Distance.COSINE,
+            multivector_config=models.MultiVectorConfig(
+                comparator=models.MultiVectorComparator.MAX_SIM
+            ),
+            hnsw_config=models.HnswConfigDiff(m=0),  # correct
+        ),
+    },
+    sparse_vectors_config={
+        "sparse": models.SparseVectorParams(
+            modifier=models.Modifier.IDF
+        )
+    }
+)
+
+# =========================
+# CSV STREAMING
+# =========================
+def parse_csv(url):
+    with urllib.request.urlopen(url) as response:
+        reader = csv.DictReader(
+            line.decode("utf-8") for line in response
+        )
+        for row in reader:
+            yield row
+
+# =========================
+# BATCH GENERATOR (IMPORTANT)
+# =========================
+def batch(iterable, size):
+    it = iter(iterable)
+    while chunk := list(itertools.islice(it, size)):
+        yield chunk
+
+# =========================
+# INGESTION
+# =========================
+def generate_points():
+    for idx, row in enumerate(parse_csv(csv_url)):
+        yield PointStruct(
+            id=idx,
+            vector={
+                "dense": Document(
+                    text=row["Description"],
+                    model=dense_embedding_model,
+                ),
+                "sparse": Document(
+                    text=row["Description"],
+                    model=sparse_embedding_model,
+                ),
+                "multi": Document(
+                    text=row["Description"],
+                    model=late_interaction_embedding_model,
+                ),
+            },
+            payload={
+                "title": row["Title"],
+                "author": row["Author"],
+                "description": row["Description"],
+            }
+        )
+
+# Upload in batches (safer for large data)
+for chunk in batch(generate_points(), BATCH_SIZE):
+    client.upload_points(
+        collection_name=collection_name,
+        points=chunk,
+    )
+
+# =========================
+# QUERY
+# =========================
+query = "time travel"
+
+prefetch = [
+    models.Prefetch(
+        query=Document(
+            text=query,
+            model=dense_embedding_model,
+        ),
+        using="dense",
+        limit=PREFETCH_LIMIT,  # 🔥 bigger pool
+    ),
+    models.Prefetch(
+        query=Document(
+            text=query,
+            model=sparse_embedding_model,
+        ),
+        using="sparse",
+        limit=PREFETCH_LIMIT,
+    ),
+]
+
+results = client.query_points(
+    collection_name=collection_name,
+    prefetch=prefetch,
+    query=Document(
+        text=query,
+        model=late_interaction_embedding_model,
+    ),
+    using="multi",
+    with_payload=True,
+    limit=FINAL_LIMIT,
+)
+
+# =========================
+# OUTPUT
+# =========================
+for point in results.points:
+    print(f"{point.payload['title']} - {point.score}")

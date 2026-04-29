@@ -136,7 +136,6 @@ class HybridToolSearcher:
         if len(self._search_cache) > self._max_cache_size:
             self._search_cache.popitem(last=False)
 
-    
     def _prepare_tool_text(self, tool: Dict[str, Any]) -> str:
         """
         Prepare a compressed, signature-like representation for a tool.

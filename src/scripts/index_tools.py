@@ -2,7 +2,16 @@ import json
 import logging
 import os
 import argparse
-from  src.hybrid_searcher import HybridToolSearcher
+import sys
+
+# Add the parent directory to sys.path to allow importing from the current directory
+# when running as a script, even if imports are inconsistent.
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from hybrid_searcher import HybridToolSearcher
+except ImportError:
+    from src.hybrid_searcher import HybridToolSearcher
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

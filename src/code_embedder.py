@@ -128,7 +128,7 @@ class CodeEmbedder:
         
     
     def last_token_pool(self, last_hidden_states, attention_mask):
-        """Last token pooling (Jina Code Embeddings uses this)"""
+        """Last token pooling (Code Embeddings uses this)"""
         left_padding = (attention_mask[:, -1].sum() == attention_mask.shape[0])
         if left_padding:
             return last_hidden_states[:, -1]

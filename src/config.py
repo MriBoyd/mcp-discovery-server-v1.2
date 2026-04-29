@@ -26,7 +26,7 @@ class Config:
     BM25_CANDIDATES = 20      # Initial BM25 retrieval
     DENSE_CANDIDATES = 20     # Initial dense retrieval
     FUSION_CANDIDATES = 4      # Candidates after fusion (reduced from 7 for speed)
-    FINAL_RESULTS = 1          # Top results after reranking
+    FINAL_RESULTS = 3          # Top results after reranking
     SEARCH_CACHE_SIZE = 100    # Number of queries to cache
     SEARCH_CACHE_TTL = 3600    # Cache TTL in seconds (1 hour)
     
