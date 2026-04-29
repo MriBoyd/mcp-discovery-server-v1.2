@@ -77,14 +77,32 @@ class HybridToolSearcher:
         return [t.lower() for t in tokens if t]
 
     def _ensure_collection(self):
-        """Ensure Qdrant collection exists.
-        Note: Tool data is now loaded via index() to avoid startup scrolling bottlenecks.
+        """Ensure Qdrant collection exists and matches the required dimension.
+        If a dimension mismatch is detected, the collection is recreated.
         """
         try:
             collections = self.qdrant.get_collections().collections
             exists = any(c.name == Config.QDRANT_COLLECTION for c in collections)
             
+            if exists:
+                # Validate dimension
+                collection_info = self.qdrant.get_collection(Config.QDRANT_COLLECTION)
+                # Some Qdrant versions might have different structures; handle with care
+                current_size = getattr(collection_info.config.params.vectors, 'size', None)
+                if current_size is None and hasattr(collection_info.config.params.vectors, '__dict__'):
+                     # Fallback for different client versions
+                     current_size = collection_info.config.params.vectors.size
+                
+                if current_size and current_size != Config.EMBEDDING_DIM:
+                    logging.warning(
+                        f"Collection {Config.QDRANT_COLLECTION} dimension mismatch: "
+                        f"existing={current_size}, model={Config.EMBEDDING_DIM}. Recreating."
+                    )
+                    self.qdrant.delete_collection(Config.QDRANT_COLLECTION)
+                    exists = False
+            
             if not exists:
+                logging.info(f"Creating Qdrant collection '{Config.QDRANT_COLLECTION}' with size {Config.EMBEDDING_DIM}")
                 self.qdrant.create_collection(
                     collection_name=Config.QDRANT_COLLECTION,
                     vectors_config=VectorParams(

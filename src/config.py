@@ -18,7 +18,7 @@ class Config:
     CODE_EMBEDDING_MODEL = jinna_model_path
     RERANKER_MODEL = rerank_model_path  # or GGUF version
     
-    EMBEDDING_DIM = 896
+    EMBEDDING_DIM = 768
     
     # Reranker (local)
     
