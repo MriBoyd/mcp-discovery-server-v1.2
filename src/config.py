@@ -10,8 +10,8 @@ class Config:
     
     
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    jinna_model_path = os.path.join(base_dir, "jina-code-0.5b")
-    rerank_model_path = os.path.join(base_dir, "re-rank")
+    jinna_model_path = os.path.join(base_dir, "my_local_model")
+    rerank_model_path = os.path.join(base_dir, "my_local_model-re-ranker")
 
     
     # Jina Code Embeddings (local)

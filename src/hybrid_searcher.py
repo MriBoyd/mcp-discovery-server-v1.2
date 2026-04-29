@@ -45,6 +45,18 @@ class HybridToolSearcher:
             model_path=Config.CODE_EMBEDDING_MODEL,
             cache_dir=Config.MODEL_CACHE_DIR
         )
+        # Ensure Config.EMBEDDING_DIM matches the loaded model's output dimension
+        try:
+            model_conf = getattr(self.embedder.model, 'config', None)
+            model_dim = None
+            if model_conf is not None:
+                model_dim = getattr(model_conf, 'hidden_size', None) or getattr(model_conf, 'dim', None) or getattr(model_conf, 'n_embd', None)
+            if model_dim:
+                if getattr(Config, 'EMBEDDING_DIM', None) != model_dim:
+                    logging.warning(f"Config.EMBEDDING_DIM ({getattr(Config, 'EMBEDDING_DIM', None)}) != model dim ({model_dim}); updating Config.EMBEDDING_DIM to model dim")
+                    Config.EMBEDDING_DIM = model_dim
+        except Exception as e:
+            logging.warning(f"Could not determine embedder model dimension: {e}")
         self.reranker = LocalReranker(
             model_path=Config.RERANKER_MODEL,
             cache_dir=Config.MODEL_CACHE_DIR

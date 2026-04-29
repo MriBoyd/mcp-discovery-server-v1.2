@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import argparse
-from src.hybrid_searcher import HybridToolSearcher
+from  src.hybrid_searcher import HybridToolSearcher
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

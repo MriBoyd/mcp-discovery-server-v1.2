@@ -1,5 +1,7 @@
 /re-rank
 /jina-code-0.5b
+/my_local_model
+/my_local_model-re-ranker
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
