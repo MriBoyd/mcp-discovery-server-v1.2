@@ -91,11 +91,16 @@ class MCPRegistryManager:
         try:
             async with asyncio.timeout(self.timeout):
                 if transport_type == "stdio":
-                    command = config.get("command")
+                    # Prefer explicit command, fall back to recorded target (shlex-joined)
+                    executable = config.get("command") or config.get("target")
                     args = config.get("args", [])
                     env = config.get("env") or os.environ.copy()
-                    
-                    server_params = StdioServerParameters(command=command, args=args, env=env)
+
+                    if not executable:
+                        logger.warning(f"No command/target provided for stdio server '{name}', skipping extraction")
+                        return []
+
+                    server_params = StdioServerParameters(command=executable, args=args, env=env)
                     async with stdio_client(server_params) as (read, write):
                         async with ClientSession(read, write) as session:
                             await session.initialize()
@@ -105,12 +110,21 @@ class MCPRegistryManager:
                 elif transport_type in ["sse", "http"]:
                     url = config.get("url")
                     headers = config.get("headers")
+
+                    # Ensure we have a valid URL before entering async contexts
+                    if not url:
+                        logger.warning(f"No URL provided for {transport_type} server '{name}', skipping extraction")
+                        return []
                     
                     async with AsyncExitStack() as stack:
                         if transport_type == "http":
-                            # Use streamable_http_client if explicit, else sse
-                            http_client = await stack.enter_async_context(create_mcp_http_client(headers)) if headers else None
-                            transport = await stack.enter_async_context(streamable_http_client(url, http_client=http_client))
+                            # Use streamable_http_client if explicit
+                            if headers:
+                                http_client = await stack.enter_async_context(create_mcp_http_client(headers))
+                                transport = await stack.enter_async_context(streamable_http_client(url, http_client=http_client))
+                            else:
+                                # No headers => don't create or pass an http_client
+                                transport = await stack.enter_async_context(streamable_http_client(url))
                             read, write, _ = transport
                         else:
                             # SSE

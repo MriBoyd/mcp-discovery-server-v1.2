@@ -12,7 +12,7 @@ import logging
 from fastmcp.client.transports.stdio import StdioTransport
 import sys
 import argparse
-
+import inspect
 from auth_manager import AuthManager
 from hybrid_searcher import HybridToolSearcher
 from rate_limiter import RateLimiterManager
@@ -58,13 +58,15 @@ class ConcurrentLRUCache:
         self.cache = OrderedDict()
         self._lock = None  # type: Optional[asyncio.Lock]
 
-    async def _ensure_lock(self):
+    async def _ensure_lock(self) -> asyncio.Lock:
+        """Ensure an asyncio.Lock exists and return it (non-optional)."""
         if self._lock is None:
             self._lock = asyncio.Lock()
+        return self._lock
 
     async def get(self, key):
-        await self._ensure_lock()
-        async with self._lock:
+        lock = await self._ensure_lock()
+        async with lock:
             if key not in self.cache:
                 return None
             # Move to end to mark as most recently used
@@ -72,8 +74,8 @@ class ConcurrentLRUCache:
             return self.cache[key]
 
     async def put(self, key, value: FastMCP[Any]):
-        await self._ensure_lock()
-        async with self._lock:
+        lock = await self._ensure_lock()
+        async with lock:
             if key in self.cache:
                 self.cache.move_to_end(key)
             self.cache[key] = value
@@ -85,20 +87,20 @@ class ConcurrentLRUCache:
         return None, None
 
     async def remove(self, key):
-        await self._ensure_lock()
-        async with self._lock:
+        lock = await self._ensure_lock()
+        async with lock:
             if key in self.cache:
                 del self.cache[key]
                 logger.debug(f"Removed server '{key}' from cache")
 
     async def size(self):
-        await self._ensure_lock()
-        async with self._lock:
+        lock = await self._ensure_lock()
+        async with lock:
             return len(self.cache)
 
     async def keys(self):
-        await self._ensure_lock()
-        async with self._lock:
+        lock = await self._ensure_lock()
+        async with lock:
             return list(self.cache.keys())
 
     async def popitem(self, last: bool = False):
@@ -107,8 +109,8 @@ class ConcurrentLRUCache:
         If last is False, pop the least-recently-used item (first item).
         Returns a tuple (key, value).
         """
-        await self._ensure_lock()
-        async with self._lock:
+        lock = await self._ensure_lock()
+        async with lock:
             if not self.cache:
                 raise KeyError("popitem(): cache is empty")
             key, value = self.cache.popitem(last=last)
@@ -186,9 +188,9 @@ class DynamicProxyManager:
 
                 # Put in cache - this may evict an old connection
                 evicted_key, evicted_proxy = await self.cache.put(server_name, proxy)
-                
-                # Cleanup evicted connection if any
-                if evicted_key:
+
+                # Cleanup evicted connection if any (only if we actually have a proxy)
+                if evicted_key and evicted_proxy is not None:
                     await self._cleanup_proxy(evicted_key, evicted_proxy)
                 
                 return proxy
@@ -214,6 +216,9 @@ class DynamicProxyManager:
                 executable = config.get("command", config.get("target"))
                 args = config.get("args", [])
                 env = config.get("env")
+                # Ensure an executable/command is provided for stdio transport
+                if not executable:
+                    raise ValueError(f"Missing 'command' or 'target' for stdio transport on server '{name}'")
                 
                 # Create explicit stdio transport to avoid inference issues with commands like 'uv'
                 stdio_transport = StdioTransport(
@@ -230,11 +235,13 @@ class DynamicProxyManager:
             else:
                 raise ValueError(f"Unknown transport: {transport_type}")
             
-            # Initialize the proxy (warm it up)
-            # Note: create_proxy returns a server that needs to be "mounted" or accessed
-            # For FastMCP, we need to ensure it's ready
-            if hasattr(proxy, 'initialize'):
-                await proxy.initialize()
+            # Initialize the proxy (warm it up) if it provides an initialize coroutine
+            # Use getattr to avoid Pylance attribute access warnings
+            init_fn = getattr(proxy, 'initialize', None)
+            if callable(init_fn):
+                maybe_coro = init_fn()
+                if inspect.isawaitable(maybe_coro):
+                    await maybe_coro
             
             return proxy
             
@@ -246,11 +253,18 @@ class DynamicProxyManager:
         """Properly cleanup a proxy connection"""
         logger.info(f"Cleaning up proxy for '{server_name}'")
         try:
-            # Attempt graceful shutdown
-            if hasattr(proxy, 'close'):
-                await proxy.close()
-            elif hasattr(proxy, 'cleanup'):
-                await proxy.cleanup()
+            # Attempt graceful shutdown using attribute-safe access
+            close_fn = getattr(proxy, 'close', None)
+            cleanup_fn = getattr(proxy, 'cleanup', None)
+
+            if callable(close_fn):
+                maybe_coro = close_fn()
+                if inspect.isawaitable(maybe_coro):
+                    await maybe_coro
+            elif callable(cleanup_fn):
+                maybe_coro = cleanup_fn()
+                if inspect.isawaitable(maybe_coro):
+                    await maybe_coro
         except Exception as e:
             logger.warning(f"Error during cleanup of '{server_name}': {e}")
     
@@ -469,7 +483,7 @@ async def search_tools(
 
 
 
-def get_server_by_tool(tool_name: str) -> str:
+def get_server_by_tool(tool_name: str) -> Optional[str]:
     """
     Retrieves the server name in O(1) time using the pre-processed map.
     """
@@ -500,7 +514,7 @@ async def call_tool(
     if not await server_rate_limiter.try_acquire(server_name):
         return f"Too many requests for server '{server_name}'. Please try again later."
 
-    ctx.info(f"Received request to call tool '{tool_name}' on server '{server_name}' with arguments: {arguments}")
+    await ctx.info(f"Received request to call tool '{tool_name}' on server '{server_name}' with arguments: {arguments}")
 
     async def _execute_tool_call():
         proxy = await proxy_manager.get_proxy(server_name)
