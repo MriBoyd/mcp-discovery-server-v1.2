@@ -379,7 +379,7 @@ async def app_lifespan(server: FastMCP):
 
 # Create main FastMCP server
 mcp = FastMCP(
-    name="Ansam-Scaled",
+    name="Ansam",
     instructions="Dynamic proxy manager for 1000+ MCP servers",
     lifespan=app_lifespan
 )
@@ -410,7 +410,7 @@ async def search_tools(
         
         # Perform hybrid search
         await progress.set_message("Searching for relevant tools...")
-        results = await asyncio.to_thread(searcher.search, query, limit=Config.FUSION_CANDIDATES)
+        results = await asyncio.to_thread(searcher.search, query, limit=Config.FINAL_RESULTS)
         await progress.increment()
         
         # Filter results based on authentication status
