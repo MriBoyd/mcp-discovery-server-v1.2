@@ -1,8 +1,4 @@
-/re-rank
-/jina-code-0.5b
-/my_local_model
-/my_local_model-re-ranker
-
+src/FASTEMBED_CACHE
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

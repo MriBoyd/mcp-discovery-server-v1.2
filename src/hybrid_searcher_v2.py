@@ -232,7 +232,7 @@ class HybridToolSearcher:
     # SEARCH
     # =========================
 
-    def search(
+    async def search(
         self,
         query: str,
         limit: int = 10,

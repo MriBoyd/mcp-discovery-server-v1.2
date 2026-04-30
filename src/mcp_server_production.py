@@ -1,6 +1,6 @@
 import asyncio
 from collections import OrderedDict
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from fastmcp.server import create_proxy
 import json
 from fastmcp import FastMCP, Context
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Module-level singleton for hybrid searcher and auth manager
 searcher: HybridToolSearcher = HybridToolSearcher()
+searcher.is_indexed = True  # Set to True after initial indexing to enable caching
 auth_manager: AuthManager = AuthManager()
 
 # Rate limiters
@@ -70,7 +71,7 @@ class ConcurrentLRUCache:
             self.cache.move_to_end(key)
             return self.cache[key]
 
-    async def put(self, key, value):
+    async def put(self, key, value: FastMCP[Any]):
         await self._ensure_lock()
         async with self._lock:
             if key in self.cache:
@@ -118,7 +119,7 @@ class ConcurrentLRUCache:
 class DynamicProxyManager:
     """Manages MCP server proxies with LRU caching and lazy loading"""
     
-    def __init__(self, max_connections: int = 50, default_servers: list = None):
+    def __init__(self, max_connections: int = 50, default_servers: Optional[list] = None):
         """
         Args:
             max_connections: Maximum number of concurrent server connections
@@ -395,7 +396,7 @@ async def search_tools(
         
         # Perform hybrid search
         await progress.set_message("Searching for relevant tools...")
-        results = await asyncio.to_thread(searcher.search, query)
+        results = await asyncio.to_thread(searcher.search, query, limit=Config.FUSION_CANDIDATES)
         await progress.increment()
         
         # Filter results based on authentication status
@@ -464,22 +465,6 @@ async def search_tools(
         
     except Exception as e:
         raise ToolError(f"Search failed: {str(e)}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
