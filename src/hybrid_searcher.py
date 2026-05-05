@@ -5,7 +5,7 @@ import itertools
 import re
 import logging
 import uuid
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 from collections import OrderedDict
 
 from qdrant_client import QdrantClient
