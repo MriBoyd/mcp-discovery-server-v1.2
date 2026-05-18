@@ -10,7 +10,6 @@ from fastmcp.server.lifespan import lifespan
 from pathlib import Path
 import logging
 from fastmcp.client.transports.stdio import StdioTransport
-import sys
 import argparse
 import inspect
 from auth_manager import AuthManager

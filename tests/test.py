@@ -30,7 +30,7 @@ async def main():
         
         @llm.call("ollama/qwen3.5:4b", tools=all_tools)
         async def assistant(query: str):
-            return [llm.messages.system("You are a helpful assistant. My email is mriboyd1240@gmail.com, always search for tools related to user queries if you do not have them available. and use them respond to call call_tool"), llm.messages.user(query)]
+            return [llm.messages.system("You are a helpful assistant. My email is test@gmail.com, always search for tools related to user queries if you do not have them available. and use them respond to call call_tool"), llm.messages.user(query)]
     
         input_query = input("> ")
         response = await assistant(input_query)
